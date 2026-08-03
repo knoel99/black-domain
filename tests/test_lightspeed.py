@@ -83,19 +83,38 @@ def test_human_operator_sees_no_delay():
         t += 30.0
 
 
-def test_agent_burst_gets_throttled_hard():
+def test_agent_write_burst_is_capped():
+    # write is not a deny-on-saturation class: its delay climbs and pins at cap.
     cfg = LightspeedConfig()
     throttle = LightspeedThrottle(cfg)
     agent = Principal.agent("rogue")
     delays = []
     t = 0.0
-    for _ in range(50):
-        v = throttle.evaluate(agent, "admin", t)
-        delays.append(v.delay_seconds)
-        t += 0.05  # 20 admin ops/sec
-    # Delay should climb and eventually hit the cap.
+    for _ in range(200):
+        v = throttle.evaluate(agent, "write", t)
+        if v.decision is Decision.DELAY:
+            delays.append(v.delay_seconds)
+        t += 0.01  # 100 write ops/sec
     assert delays[-1] > delays[0]
     assert max(delays) == cfg.max_delay
+
+
+def test_agent_admin_burst_saturates_to_deny():
+    # admin IS a deny-on-saturation class: once the quota saturates past
+    # max_delay the throttle refuses outright instead of a bounded delay.
+    cfg = LightspeedConfig()
+    throttle = LightspeedThrottle(cfg)
+    agent = Principal.agent("rogue")
+    saw_deny = False
+    t = 0.0
+    for _ in range(50):
+        v = throttle.evaluate(agent, "admin", t)
+        if v.decision is Decision.DENY:
+            saw_deny = True
+            assert "saturated" in v.reason
+            break
+        t += 0.05  # 20 admin ops/sec
+    assert saw_deny, "sustained admin burst should saturate to a DENY"
 
 
 def test_reads_are_cheap_even_in_bursts():
@@ -113,18 +132,55 @@ def test_reads_are_cheap_even_in_bursts():
 
 
 def test_suspicion_multiplier_raises_delay():
-    cfg = LightspeedConfig()
-    throttle = LightspeedThrottle(cfg)
-    agent = Principal.agent("suspect")
+    # Huge quotas so backpressure ~0 and the progressive (cadence) term dominates,
+    # isolating the suspicion multiplier. Two throttles fed identical arrivals.
+    cfg = LightspeedConfig(
+        quota_capacity={"read": 1e9, "write": 1e9, "admin": 1e9, "exfil": 1e9},
+        quota_refill_per_sec={"read": 1e6, "write": 1e6, "admin": 1e6, "exfil": 1e6},
+    )
+    agent = Principal.agent("x")
+    plain = LightspeedThrottle(cfg)
+    suspicious = LightspeedThrottle(cfg)
+    suspicious.set_suspicion("x", 3.0)
+    vp = vs = None
     t = 0.0
-    for _ in range(5):
-        throttle.evaluate(agent, "write", t)
+    for _ in range(120):
+        vp = plain.evaluate(agent, "write", t)
+        vs = suspicious.evaluate(agent, "write", t)
         t += 0.1
-    base = throttle.evaluate(agent, "write", t)
-    throttle.set_suspicion("suspect", 5.0)
-    t += 0.1
-    raised = throttle.evaluate(agent, "write", t)
-    assert raised.delay_seconds >= base.delay_seconds
+    assert vp.delay_seconds > 0.0  # non-vacuous: base delay is actually positive
+    expected = min(cfg.max_delay, vp.delay_seconds * 3.0)
+    assert abs(vs.delay_seconds - expected) < 1e-6
+
+
+def test_behavioral_reclassification_denies_the_human_discount():
+    # A principal that CLAIMS to be human but bursts like a script is taxed the
+    # same as a declared agent -- declaring kind=human must not halve the delay.
+    cfg = LightspeedConfig(
+        quota_capacity={"read": 1e9, "write": 1e9, "admin": 1e9, "exfil": 1e9},
+        quota_refill_per_sec={"read": 1e6, "write": 1e6, "admin": 1e6, "exfil": 1e6},
+    )
+    fake_human = LightspeedThrottle(cfg)
+    real_agent = LightspeedThrottle(cfg)
+    vh = va = None
+    t = 0.0
+    for _ in range(120):
+        vh = fake_human.evaluate(Principal.human("h"), "write", t)
+        va = real_agent.evaluate(Principal.agent("a"), "write", t)
+        t += 0.1
+    assert vh.metadata["effective_agentic"] is True
+    assert abs(vh.delay_seconds - va.delay_seconds) < 1e-6
+
+
+def test_per_principal_state_is_lru_bounded():
+    cfg = LightspeedConfig(max_principals=10)
+    throttle = LightspeedThrottle(cfg)
+    t = 0.0
+    for i in range(500):  # 500 distinct principal ids (id rotation)
+        throttle.evaluate(Principal.agent(f"p{i}"), "write", t)
+        t += 0.001
+    assert len(throttle._lru) <= 10
+    assert len(throttle._buckets) <= 10
 
 
 def test_gateway_spends_delay_on_clock():

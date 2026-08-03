@@ -105,7 +105,9 @@ def test_canary_and_rejections_cross_quarantine_and_set_suspicion():
     clk = ManualClock()
     log = EventLog()
     throttle = RecordingThrottle()
-    cfg = _cfg()  # quarantine at 100, seal at 200 (defaults)
+    # Disable the single-hard-signal trigger so this exercises the pure
+    # score-accumulation path (that path is tested on its own below).
+    cfg = _cfg(hard_signal_quarantine=10**9)  # quarantine at 100, seal at 200
     sent = Sentinel(cfg, clock=clk, throttle=throttle, log=log)
     sent.attach(log)
 
@@ -153,7 +155,8 @@ def test_score_accumulates_with_decay_between_events():
     clk = ManualClock()
     log = EventLog()
     # High thresholds so nothing escalates -- this test is purely about scoring.
-    cfg = _cfg(decay_half_life_seconds=300.0, quarantine_threshold=1e6, seal_threshold=1e6)
+    cfg = _cfg(decay_half_life_seconds=300.0, quarantine_threshold=1e6, seal_threshold=1e6,
+               hard_signal_quarantine=10**9)
     sent = Sentinel(cfg, clock=clk, log=log)
     sent.attach(log)
 
@@ -250,6 +253,75 @@ def test_integrates_with_real_lightspeed_throttle():
     # The real throttle now applies the suspicion multiplier to this principal.
     verdict = throttle.evaluate(Principal.agent(pid), "exfil", clk.monotonic())
     assert verdict.metadata["suspicion"] == cfg.suspicion_delay_factor
+
+
+def test_single_canary_trip_quarantines_immediately():
+    # A tripped canary is unambiguous: one is enough, regardless of decay/score.
+    clk = ManualClock()
+    log = EventLog()
+    throttle = RecordingThrottle()
+    sent = Sentinel(_cfg(), clock=clk, throttle=throttle, log=log)  # hard_signal_quarantine=1
+    sent.attach(log)
+
+    log.append(_canary(clk, "rogue"))  # single hard signal, score 80 < 100
+    assert sent.is_quarantined("rogue")
+    assert throttle.suspicion["rogue"] == SentinelConfig().suspicion_delay_factor
+
+
+def test_id_rotation_trips_enclave_aggregate_seal():
+    # Each rotated principal stays under the per-principal threshold, but their
+    # aggregate pressure against one enclave still trips a seal.
+    clk = ManualClock()
+    log = EventLog()
+    enclave = FakeEnclave(id="crown-jewels")
+    cfg = _cfg(
+        hard_signal_quarantine=10**9,   # disable single-signal quarantine
+        quarantine_threshold=10**6,     # no principal ever quarantines alone
+        seal_threshold=10**6,
+        enclave_aggregate_threshold=150.0,
+    )
+    sent = Sentinel(cfg, clock=clk, enclaves={"crown-jewels": enclave}, log=log)
+    sent.attach(log)
+
+    for pid in ("a1", "a2", "a3"):  # rotating ids, each 80 pts, none contained alone
+        log.append(
+            Event(
+                ts=clk.wall(),
+                kind="darkforest.canary_tripped",
+                severity=Severity.CRITICAL,
+                principal_id=pid,
+                data={"enclave": "crown-jewels"},
+            )
+        )
+
+    assert not sent.is_quarantined("a1")
+    assert enclave.sealed is True  # the enclave they hammered is sealed
+    seals = [r.event for r in log.records if r.event.kind == "sentinel.seal"]
+    assert len(seals) == 1
+    assert "aggregate" in seals[0].data["trigger"]
+
+
+def test_non_sticky_score_map_is_lru_bounded():
+    # Non-sticky per-principal state cannot be grown without bound by id churn.
+    clk = ManualClock()
+    log = EventLog()
+    cfg = _cfg(max_principals=10, hard_signal_quarantine=10**9,
+               quarantine_threshold=10**6, seal_threshold=10**6)
+    sent = Sentinel(cfg, clock=clk, log=log)
+    sent.attach(log)
+    for i in range(500):
+        log.append(
+            Event(
+                ts=clk.wall(),
+                kind="lightspeed.guard",       # capped pressure, not a hard signal
+                severity=Severity.WARNING,
+                principal_id=f"p{i}",
+                action_class="write",
+                data={"capped": True},
+            )
+        )
+        clk.advance(0.001)
+    assert len(sent._scores) <= 10
 
 
 def test_sentinel_ignores_its_own_events_and_unattributed_events():

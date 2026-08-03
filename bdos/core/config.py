@@ -10,6 +10,8 @@ admin/exfil actions are slowed hard and require a signed safety notice.
 
 from __future__ import annotations
 
+import ipaddress
+import re
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any
@@ -18,6 +20,30 @@ from bdos.core.errors import ConfigError
 
 # Action classes, ordered by blast radius. Everything maps onto one of these.
 ACTION_CLASSES = ("read", "write", "admin", "exfil")
+# The only class that never mutates or moves data; everything else is "hard".
+NON_MUTATING = ("read",)
+
+_HOSTNAME_RE = re.compile(
+    r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*\.?$"
+)
+
+
+def is_valid_egress_entry(entry: str) -> bool:
+    """True if ``entry`` is a well-formed IP, CIDR, or hostname.
+
+    Egress allowlist entries are interpolated into an ``nftables`` ruleset, so an
+    entry that is neither a valid network nor a valid hostname is rejected at
+    config load rather than injected into the firewall (see the compiler)."""
+    if not isinstance(entry, str) or not entry or any(c.isspace() for c in entry):
+        return False
+    if any(c in entry for c in ";{}#\n\r\\\"'"):
+        return False
+    try:
+        ipaddress.ip_network(entry, strict=False)
+        return True
+    except ValueError:
+        pass
+    return bool(_HOSTNAME_RE.match(entry))
 
 
 @dataclass
@@ -42,6 +68,13 @@ class LightspeedConfig:
     )
     # Mean inter-arrival (s) at/above which a cadence looks humanlike.
     human_cadence_threshold: float = 1.0
+    # Classes for which saturating the quota (required wait > max_delay) is a
+    # hard DENY rather than a capped DELAY -- so throughput is bounded to the
+    # refill rate, not to one burst per max_delay.
+    deny_on_saturation: list[str] = field(default_factory=lambda: ["admin", "exfil"])
+    # Upper bound on tracked principals; the least-recently-seen are evicted so
+    # per-principal state cannot be grown without bound by id rotation.
+    max_principals: int = 100_000
 
     def multiplier(self, action_class: str) -> float:
         return self.tier_multiplier.get(action_class, 1.0)
@@ -97,6 +130,16 @@ class SentinelConfig:
     auto_contain: bool = True
     # Multiplier applied to Lightspeed delay when a principal is under suspicion.
     suspicion_delay_factor: float = 5.0
+    # Number of high-confidence "hard" signals (canary trips, attestation
+    # rejections) that trigger immediate quarantine regardless of decay. 1 means
+    # a single tripped canary contains at once.
+    hard_signal_quarantine: int = 1
+    # Aggregate (decay-immune) score against a single enclave, summed across all
+    # principals, that triggers containment -- defeats id-rotation attacks that
+    # keep each principal below the per-principal threshold.
+    enclave_aggregate_threshold: float = 150.0
+    # Upper bound on tracked principals (LRU eviction of the lowest scorers).
+    max_principals: int = 100_000
 
 
 @dataclass
@@ -121,8 +164,26 @@ class BDOSConfig:
         ids = [e.id for e in self.blackdomain.enclaves]
         if len(ids) != len(set(ids)):
             raise ConfigError("duplicate enclave id")
+        # A member in two enclaves could let a permissive enclave shadow a
+        # sealed/strict one; forbid overlap so the router's decision is unique.
+        seen_members: dict[str, str] = {}
+        for enc in self.blackdomain.enclaves:
+            for member in enc.members:
+                if member in seen_members:
+                    raise ConfigError(
+                        f"member {member!r} is in both {seen_members[member]!r} and {enc.id!r}; "
+                        "enclaves must not overlap"
+                    )
+                seen_members[member] = enc.id
+            for dst in enc.egress_allow:
+                if not is_valid_egress_entry(dst):
+                    raise ConfigError(
+                        f"enclave {enc.id!r} egress_allow entry {dst!r} is not a valid IP/CIDR/hostname"
+                    )
         if self.sentinel.seal_threshold < self.sentinel.quarantine_threshold:
             raise ConfigError("sentinel.seal_threshold must be >= quarantine_threshold")
+        if self.sentinel.decay_half_life_seconds <= 0:
+            raise ConfigError("sentinel.decay_half_life_seconds must be positive")
         return self
 
 

@@ -42,9 +42,17 @@ def test_allowlisted_egress_is_permitted():
     allowed = enc.decide_egress("10.0.0.5")
     assert allowed.decision is Decision.ALLOW
     assert allowed.allowed
-    # An address not on the exact allowlist is still denied.
-    denied = enc.decide_egress("10.0.0.6")
-    assert denied.decision is Decision.DENY
+    # A CIDR allowlist entry admits any host inside it (the router agrees with
+    # the firewall, which resolves CIDRs).
+    assert enc.decide_egress("10.0.0.6").decision is Decision.ALLOW
+    # An address outside every allowlisted network is denied.
+    assert enc.decide_egress("10.0.1.6").decision is Decision.DENY
+
+
+def test_hostname_egress_matches_case_insensitively():
+    enc = _enclave(egress=["Backup.Internal"])
+    assert enc.decide_egress("backup.internal.").decision is Decision.ALLOW
+    assert enc.decide_egress("evil.internal").decision is Decision.DENY
 
 
 # -- actions --------------------------------------------------------------
@@ -116,13 +124,32 @@ def test_nftables_contains_each_enclave_and_drop_policy():
     assert "table inet bdos {" in ruleset
     for enc in encs:
         assert enc.id in ruleset
-    # Default-deny is expressed both as chain policy and an explicit drop.
-    assert "policy drop;" in ruleset
-    assert "drop" in ruleset
+    # Per-enclave chains default-deny via an explicit counter drop.
+    assert 'counter drop comment "bdos vault default-deny egress"' in ruleset
+    assert 'counter drop comment "bdos mint default-deny egress"' in ruleset
+    # The single base output chain accepts by default so the host is not
+    # blackholed, and dispatches only member-sourced traffic into enclave chains.
+    assert "hook output priority filter; policy accept;" in ruleset
+    assert "ip saddr @bdos_vault_src jump vault_egress" in ruleset
     # Allowlisted destinations become accept rules.
     assert "ip daddr 10.0.0.5 accept" in ruleset
     assert "ip daddr 192.168.1.0/24 accept" in ruleset
     assert "ip daddr backup.internal accept" in ruleset
+
+
+def test_nftables_does_not_blackhole_the_host():
+    # A restrictive enclave must not drop non-member egress: exactly one base
+    # hook, and its policy is accept.
+    ruleset = compile_nftables([_enclave(id="vault", egress=[])])
+    assert ruleset.count("hook output") == 1
+    assert "policy drop;" not in ruleset
+    assert "policy accept;" in ruleset
+
+
+def test_nftables_rejects_injected_egress_entry():
+    bad = _enclave(id="evil", egress=["1.2.3.4 accept; drop #"])
+    with pytest.raises(ValueError):
+        compile_nftables([bad])
 
 
 def test_nftables_is_deterministic_and_order_independent():
@@ -136,7 +163,8 @@ def test_nftables_sealed_enclave_has_no_accept_rules():
     ruleset = compile_nftables([enc])
     assert "SEALED" in ruleset
     assert "10.0.0.5 accept" not in ruleset
-    assert "policy drop;" in ruleset
+    # The sealed enclave's chain still ends in the default-deny counter drop.
+    assert 'counter drop comment "bdos vault default-deny egress"' in ruleset
 
 
 def test_nftables_ipv6_uses_ip6_match():
@@ -179,3 +207,30 @@ def test_router_denies_through_sealed_enclave():
     v = router.decide("db-primary", "10.0.0.5")
     assert v.decision is Decision.DENY
     assert "sealed" in v.reason
+
+
+def test_router_folds_all_containing_enclaves_most_restrictive():
+    # If a member is (mis)configured into two enclaves, the strictest wins: a
+    # permissive enclave cannot shadow a sealed one.
+    open_enc = _enclave(id="open", members=["m"], egress=["10.0.0.5"])
+    sealed = _enclave(id="sealed", members=["m"], egress=["10.0.0.5"], sealed=True)
+    router = EnclaveRouter([open_enc, sealed])
+    assert router.enclaves_for("m") == [open_enc, sealed]
+    assert router.decide("m", "10.0.0.5").decision is Decision.DENY
+
+
+def test_config_rejects_overlapping_enclave_members():
+    from bdos.core.config import from_dict
+    from bdos.core.errors import ConfigError
+
+    with pytest.raises(ConfigError):
+        from_dict(
+            {
+                "blackdomain": {
+                    "enclaves": [
+                        {"id": "a", "members": ["shared"]},
+                        {"id": "b", "members": ["shared"]},
+                    ]
+                }
+            }
+        )

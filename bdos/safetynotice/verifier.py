@@ -7,11 +7,22 @@ raises the precise error subclass so a caller can react to *why* a notice
 failed. :meth:`SafetyNoticeVerifier.guard` is the safe front-end: it never
 raises, folds every failure into a ``DENY`` verdict, and records the outcome on
 the event log so the Sentinel can watch attestation pressure build.
+
+Scope and durability. Replay and revocation state live *in this process*. A
+spent nonce is remembered until its validity window closes (after which the
+window check rejects it anyway), and the cache is bounded by issuance-rate x TTL
+rather than by a raw count -- a still-valid nonce is never forgotten, and if the
+cache genuinely fills with live nonces the verifier *fails closed* rather than
+silently reopen replay. Across a restart or a second verifier instance this
+state is not shared: a production deployment that runs more than one verifier, or
+must survive restarts, has to back ``_seen``/revocation with a shared, durable
+store (e.g. Redis/DB keyed by nonce with a TTL of ``not_after + clock_skew``).
+See ``docs/THREAT_MODEL.md``.
 """
 
 from __future__ import annotations
 
-from collections import deque
+import heapq
 from typing import Optional
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -43,9 +54,11 @@ class SafetyNoticeVerifier:
         self._keys: dict[str, Ed25519PublicKey] = {}
         self._revoked_kids: set[str] = set()
         self._revoked_nonces: set[str] = set()
-        # Bounded replay cache: a set for O(1) membership, a deque for eviction.
-        self._seen: set[str] = set()
-        self._seen_order: deque[str] = deque()
+        # Expiry-aware replay cache: nonce -> not_after, plus a min-heap on
+        # not_after so expired nonces (which the window check rejects anyway) are
+        # pruned cheaply. A still-valid nonce is never dropped.
+        self._seen: dict[str, float] = {}
+        self._expiry_heap: list[tuple[float, str]] = []
 
     # -- registration / revocation --------------------------------------
     def add_key(self, pk: Ed25519PublicKey, kid: Optional[str] = None) -> str:
@@ -64,11 +77,29 @@ class SafetyNoticeVerifier:
         self._revoked_kids.add(kid)
 
     # -- internals ------------------------------------------------------
-    def _remember(self, nonce: str) -> None:
-        self._seen.add(nonce)
-        self._seen_order.append(nonce)
-        while len(self._seen_order) > self.cfg.replay_cache_size:
-            self._seen.discard(self._seen_order.popleft())
+    def _prune_expired(self, now: float) -> None:
+        """Drop nonces whose window has fully closed; those are safe to forget
+        because the validity-window check rejects them regardless of the cache."""
+        skew = self.cfg.clock_skew
+        heap = self._expiry_heap
+        while heap and heap[0][0] + skew < now:
+            _, nonce = heapq.heappop(heap)
+            if nonce in self._seen and self._seen[nonce] + skew < now:
+                del self._seen[nonce]
+
+    def _remember(self, nonce: str, not_after: float, now: float) -> None:
+        """Record a spent nonce, or fail closed if the cache is full of live ones.
+
+        Raises :class:`AttestationError` when the cache is already full of
+        still-valid nonces: dropping one to make room would re-open replay, so
+        the verifier refuses the action instead."""
+        self._prune_expired(now)
+        if len(self._seen) >= self.cfg.replay_cache_size and nonce not in self._seen:
+            raise AttestationError(
+                "replay cache full of live nonces; refusing to accept (fail closed)"
+            )
+        self._seen[nonce] = not_after
+        heapq.heappush(self._expiry_heap, (not_after, nonce))
 
     # -- decision -------------------------------------------------------
     def verify(
@@ -122,11 +153,12 @@ class SafetyNoticeVerifier:
                 f"[{cap.not_before}, {cap.not_after}] at {at}"
             )
 
-        # 5. Replay: a nonce may be spent exactly once.
+        # 5. Replay: a nonce may be spent exactly once. Records the nonce (or
+        #    fails closed if the cache is full of still-valid nonces).
         if cap.nonce in self._seen:
             raise ReplayError("safety notice nonce already spent (replay)")
 
-        self._remember(cap.nonce)
+        self._remember(cap.nonce, cap.not_after, at)
         return Verdict.allow(
             reason=f"safety notice valid for {action_class} on {resource}",
             kid=cap.issuer_kid,

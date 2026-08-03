@@ -21,7 +21,10 @@ call -- a loop that tightens under sustained attack.
 
 from __future__ import annotations
 
+import json
 import os
+import socketserver
+import threading
 from typing import Optional
 
 from bdos.core import crypto
@@ -29,7 +32,7 @@ from bdos.core.clock import Clock, SystemClock
 from bdos.core.config import BDOSConfig, default as default_config
 from bdos.core.decision import Verdict
 from bdos.core.events import Event, EventLog, Severity
-from bdos.core.identity import Principal
+from bdos.core.identity import Principal, PrincipalKind
 from bdos.lightspeed import LightspeedGateway, LightspeedThrottle
 from bdos.safetynotice import SafetyNotice, SafetyNoticeIssuer, SafetyNoticeVerifier
 from bdos.darkforest import Deception, MovingTarget
@@ -135,8 +138,10 @@ class ControlPlane:
         verdict = Verdict.allow(reason="authorized")
 
         # (2) Black Domain -- a structural deny no valid notice can buy past.
-        enclave = self.enclave_for(pid)
-        if enclave is not None:
+        #     Fold over EVERY enclave that contains the principal so the most
+        #     restrictive wins (a permissive enclave can never shadow a sealed
+        #     one, even if config validation is bypassed).
+        for enclave in self.router.enclaves_for(pid):
             action = enclave.decide_action(action_class)
             if not action.allowed:
                 self._emit_denied("blackdomain.action_denied", principal, action_class, resource, action)
@@ -234,27 +239,114 @@ class ControlPlane:
         }
 
 
+DEFAULT_SOCKET = "/run/bdos/bdosd.sock"
+
+
+class _RequestHandler(socketserver.StreamRequestHandler):
+    """One connection may carry many newline-delimited JSON requests."""
+
+    def handle(self) -> None:
+        server: "BdosServer" = self.server  # type: ignore[assignment]
+        for raw in self.rfile:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                req = json.loads(line.decode())
+            except (ValueError, UnicodeDecodeError):
+                self._send({"error": "malformed request"})
+                continue
+            self._send(server.dispatch(req))
+
+    def _send(self, obj: dict) -> None:
+        self.wfile.write((json.dumps(obj) + "\n").encode())
+        self.wfile.flush()
+
+
+class BdosServer(socketserver.ThreadingUnixStreamServer):
+    """A unix-socket server that owns ONE long-lived :class:`ControlPlane`.
+
+    This is what makes enforcement real: every ``authorize`` request -- from
+    every ``bdosctl guard`` / ``bdos-exec`` invocation on the host -- is served
+    by the same plane, so Lightspeed cadence/quota, Sentinel scores, and the
+    safety-notice replay cache accumulate *across* calls instead of resetting per
+    process. A lock serializes access to the (non-thread-safe) plane state.
+    """
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, socket_path: str, plane: ControlPlane) -> None:
+        parent = os.path.dirname(os.path.abspath(socket_path))
+        os.makedirs(parent, exist_ok=True)
+        if os.path.exists(socket_path):
+            os.unlink(socket_path)  # clear a stale socket from a prior run
+        super().__init__(socket_path, _RequestHandler)
+        self.socket_path = socket_path
+        self.plane = plane
+        self._lock = threading.Lock()
+
+    def dispatch(self, req: dict) -> dict:
+        op = req.get("op", "authorize")
+        if op == "status":
+            with self._lock:
+                return self.plane.status()
+        if op != "authorize":
+            return {"error": f"unknown op {op!r}"}
+
+        try:
+            kind = PrincipalKind(req.get("kind", "agent"))
+        except ValueError:
+            kind = PrincipalKind.UNKNOWN
+        principal = Principal(id=req.get("principal", ""), kind=kind)
+        notice = None
+        if req.get("notice"):
+            try:
+                notice = SafetyNotice.decode(req["notice"])
+            except Exception:  # a malformed notice is simply "no valid notice"
+                notice = None
+        with self._lock:
+            verdict = self.plane.authorize(
+                principal,
+                req.get("action_class", "read"),
+                req.get("resource", ""),
+                notice=notice,
+            )
+        return {
+            "decision": verdict.decision.label,
+            "allowed": verdict.allowed,
+            "delay_seconds": verdict.delay_seconds,
+            "reason": verdict.reason,
+        }
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """Entry point for the ``bdosd`` service.
 
-    Builds a control plane from the configured policy and prints a one-shot
-    status banner. It is intentionally non-blocking by default so it stays
-    importable and safe under tests; pass ``--serve`` to run the long-lived
-    supervision loop the systemd unit expects.
+    Without ``--serve`` it builds the plane, prints a one-shot status banner, and
+    exits (importable and safe under tests). With ``--serve`` it runs the real
+    enforcement server: one ControlPlane bound to a unix socket that
+    ``bdosctl guard`` / ``bdos-exec`` connect to, so state is shared across every
+    request on the host.
     """
     import argparse
-    import time
 
     parser = argparse.ArgumentParser(prog="bdosd", description="BDOS control-plane daemon")
     parser.add_argument("--config", help="path to a bdos.toml policy (default: built-in defaults)")
-    parser.add_argument("--serve", action="store_true", help="run the supervision loop instead of exiting")
+    parser.add_argument("--serve", action="store_true", help="run the enforcement server instead of exiting")
+    parser.add_argument(
+        "--socket",
+        help=f"unix socket to serve on (default: $BDOS_SOCKET or {DEFAULT_SOCKET})",
+    )
     args = parser.parse_args(argv)
 
     from bdos.controlplane.cli import _load_config  # local import: avoid a cycle at import time
 
     plane = ControlPlane(_load_config(args.config))
     snap = plane.status()
+    role = os.environ.get("BDOS_ROLE", "control-plane")
     print("bdosd: BDOS control plane up")
+    print(f"  role        : {role}")
     print(f"  policy      : {args.config or 'built-in defaults'}")
     print(f"  issuer kid  : {snap['issuer_kid']}")
     print(f"  enclaves    : {', '.join(snap['enclaves']) or '(none)'}")
@@ -263,12 +355,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not args.serve:
         return 0
 
-    print("bdosd: entering supervision loop (Ctrl-C to stop)")
+    socket_path = args.socket or os.environ.get("BDOS_SOCKET") or DEFAULT_SOCKET
+    server = BdosServer(socket_path, plane)
+    print(f"bdosd: enforcement server listening on {socket_path}")
     try:  # pragma: no cover - the loop is exercised only by the running service
-        while True:
-            time.sleep(60)
+        server.serve_forever()
     except KeyboardInterrupt:
         print("bdosd: shutting down")
+    finally:  # pragma: no cover
+        server.server_close()
+        if os.path.exists(socket_path):
+            os.unlink(socket_path)
     return 0
 
 

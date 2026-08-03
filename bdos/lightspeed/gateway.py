@@ -38,7 +38,9 @@ class LightspeedGateway:
 
         if self.log is not None:
             severity = Severity.INFO
-            if verdict.metadata.get("capped"):
+            if verdict.decision == Decision.DENY:
+                severity = Severity.ALERT
+            elif verdict.metadata.get("capped"):
                 severity = Severity.WARNING
             self.log.append(
                 Event(

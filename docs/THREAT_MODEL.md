@@ -230,6 +230,46 @@ shape, not bugs to be fixed.
   moving target stops moving from the attacker's perspective -- the schedule
   becomes as predictable to them as to a legitimate client. MTD degrades
   gracefully to "no worse than a static system," but no better.
+- **Replay and revocation state are process-local.** The Safety Notice verifier
+  remembers spent nonces and revocations *in memory*, in one process. A spent
+  nonce is kept until its window closes (so it can never be replayed while still
+  valid) and the cache *fails closed* if it ever fills with live nonces rather
+  than silently forgetting one -- but that failure mode is itself an availability
+  lever, and, more importantly, a second verifier instance or a restarted one
+  does not share this state. A deployment that runs more than one verifier, or
+  must survive restarts without a replay gap, has to back the nonce/revocation
+  store with a shared, durable service (e.g. Redis keyed by nonce with a TTL of
+  `not_after + clock_skew`). BDOS ships the correct single-process semantics, not
+  the distributed store.
+- **Containment state is sticky, and stickiness has a memory cost under
+  id-rotation.** A quarantined or canary-flagged principal is never forgotten
+  (forgetting an attacker would let them back in), so an adversary who rotates
+  principal ids *and* trips a canary on each one can grow the quarantine set
+  without bound. The design's answer is deliberate: non-sticky per-principal
+  state is LRU-bounded, and the defense against id-rotation shifts to the
+  *enclave aggregate* -- hostile pressure against a protected enclave is summed
+  across all principals and seals the enclave once it crosses a threshold, a
+  bound set by the (small, fixed) number of enclaves rather than the (unbounded)
+  number of ids an attacker can invent. The residual is that the quarantine set
+  itself is bounded only by the number of *real* escalations plus whatever churn
+  an attacker is willing to pay a canary trip for.
+- **A seal is durable only if the policy is persisted.** Sealing is one-way in
+  memory and is reflected back onto the enclave spec, but surviving a host
+  restart requires the operator to persist the updated policy (write
+  `sealed = true` to `bdos.toml`). Until that is done, a restart of `bdosd`
+  reopens an enclave the Sentinel had sealed at runtime. The one-way guarantee is
+  absolute within a process lifetime; across restarts it is only as strong as
+  policy persistence.
+- **Stateful enforcement requires the running daemon.** Throttle cadence,
+  Sentinel scores, and the replay cache live inside one long-lived `bdosd`
+  process; `bdosctl guard` / `bdos-exec` are thin clients that must reach it over
+  its unix socket for that state to accumulate across commands. Run standalone
+  (no socket configured), each invocation is an isolated, stateless check -- still
+  correct for a single decision, but with no cross-command memory. When a socket
+  *is* configured and the daemon is down, the guard fails closed (refuses) rather
+  than silently degrade; a wrongly-configured or crashed daemon is therefore an
+  availability event, which is the intended direction to fail but an availability
+  risk nonetheless.
 - **Do not rely on the attacker being unreliable.** The GTG-1002 campaign was
   partially blunted because the agent *hallucinated* -- overstating findings,
   claiming credentials that did not work. That was luck, not defense: it is an

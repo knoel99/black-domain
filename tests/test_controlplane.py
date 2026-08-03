@@ -237,3 +237,50 @@ def test_cli_status_and_seal(tmp_path, capsys):
 def test_daemon_main_prints_status_and_returns_zero(capsys):
     assert daemon_main([]) == 0
     assert "control plane up" in capsys.readouterr().out
+
+
+def test_server_shares_state_across_requests(tmp_path):
+    # The whole point of bdosd --serve: one plane, state accumulating across
+    # separate guard requests (this is what a fresh-plane-per-call cannot do).
+    import json
+    import socket
+    import threading
+
+    from bdos.controlplane.daemon import BdosServer
+
+    sock_path = str(tmp_path / "bdosd.sock")
+    plane = ControlPlane(_demo_config())  # real clock ok: deny/quarantine never sleep
+    server = BdosServer(sock_path, plane)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.connect(sock_path)
+            conn = s.makefile("rw")
+
+            def call(**req):
+                req["op"] = "authorize"
+                conn.write(json.dumps(req) + "\n")
+                conn.flush()
+                return json.loads(conn.readline())
+
+            # Three unattested exfil attempts accumulate the Sentinel score...
+            for _ in range(3):
+                r = call(principal="rogue", kind="agent", action_class="exfil", resource="10.9.9.9")
+                assert r["decision"] == "deny"
+            # ...and because state is shared, the principal is now quarantined.
+            r = call(principal="rogue", kind="agent", action_class="write", resource="x")
+            assert r["decision"] == "quarantine"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_guard_fails_closed_when_socket_unreachable(capsys):
+    # A configured-but-dead control plane must fail closed, not silently allow.
+    rc = cli_main(
+        ["guard", "--principal", "u", "--kind", "agent", "--class", "read",
+         "--resource", "x", "--socket", "/nonexistent/bdos.sock"]
+    )
+    assert rc == 3
+    assert "failing closed" in capsys.readouterr().err

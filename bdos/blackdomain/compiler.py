@@ -1,46 +1,59 @@
 """Compile enclaves to firewall rules, and route members through them.
 
 :func:`compile_nftables` renders a set of :class:`~bdos.blackdomain.enclave.Enclave`
-objects into an ``nftables`` ruleset -- one ``inet`` table (``bdos``) with a
-per-enclave output chain that defaults to ``drop`` and accepts only the
-allowlisted destinations. The output is deterministic (enclaves are emitted in
-sorted order) so it diffs cleanly and can be regenerated idempotently by the
-control plane.
+objects into an ``nftables`` ruleset. The design goal is that segmenting one
+enclave must never blackhole the whole host's egress: there is a *single* base
+``output`` chain whose policy is ``accept``, and it dispatches only
+member-sourced traffic into per-enclave chains that default-drop. Traffic from
+anything that is not an enclave member falls through and is accepted. Output is
+deterministic (enclaves emitted in sorted order) so it diffs cleanly and can be
+regenerated idempotently.
 
-:class:`EnclaveRouter` is the in-process complement to that firewall: given a
-member it finds the enclave that owns it and applies the enclave's egress
-policy, treating members that belong to no enclave as unsegmented (allowed).
+Each enclave gets an (initially empty) source set ``bdos_<id>_src`` that the
+operator populates with the source addresses of that enclave's members -- the
+compiler cannot resolve a logical member name to an address on its own, so it
+emits the set and names the members in a comment.
+
+:class:`EnclaveRouter` is the in-process complement: given a member it finds
+*every* enclave that owns it and folds their egress policies with
+:meth:`~bdos.core.decision.Verdict.combine`, so the most restrictive enclave
+always wins (a permissive enclave can never shadow a sealed one).
 """
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Iterable, Optional
 
+from bdos.core.config import is_valid_egress_entry
 from bdos.core.decision import Verdict
 from bdos.blackdomain.enclave import Enclave
 
 
 def _chain_name(enclave_id: str) -> str:
-    """Derive an nft-safe chain name from an enclave id."""
-    safe = "".join(c if c.isalnum() else "_" for c in enclave_id)
-    return f"{safe}_egress"
+    """Derive an nft-safe identifier fragment from an enclave id."""
+    return "".join(c if c.isalnum() else "_" for c in enclave_id)
 
 
 def _egress_rule(dst: str) -> str:
-    """Render a single allowlist entry as an nftables accept rule."""
-    # nft resolves hostnames at load time; ip6 handles literal IPv6 targets.
-    family = "ip6" if ":" in dst else "ip"
+    """Render a single validated allowlist entry as an nftables accept rule."""
+    if not is_valid_egress_entry(dst):
+        # Never interpolate an unvalidated string into the ruleset.
+        raise ValueError(f"invalid egress allowlist entry {dst!r}")
+    try:
+        family = "ip6" if ipaddress.ip_network(dst, strict=False).version == 6 else "ip"
+    except ValueError:
+        family = "ip"  # hostname; nft resolves it at load (A records)
     return f"{family} daddr {dst} accept"
 
 
 def compile_nftables(enclaves: Iterable[Enclave]) -> str:
     """Render ``enclaves`` into a deterministic ``table inet bdos`` ruleset.
 
-    Each enclave gets an output chain whose policy is ``drop``; only its
-    allowlisted destinations are accepted. A sealed enclave emits no accept
-    rules at all, so the default-deny policy silently swallows every packet --
-    the firewall mirror of the one-way door.
-    """
+    Each enclave gets a regular (non-base) chain that default-drops and accepts
+    only its allowlisted destinations; a sealed enclave accepts nothing. A single
+    base ``output`` chain (policy accept) dispatches member-sourced packets into
+    the right enclave chain, so non-members are unaffected."""
     ordered = sorted(enclaves, key=lambda e: e.id)
 
     lines: list[str] = [
@@ -51,12 +64,21 @@ def compile_nftables(enclaves: Iterable[Enclave]) -> str:
         "table inet bdos {",
     ]
 
+    # Per-enclave source sets (operator populates with member source addresses).
     for enc in ordered:
-        chain = _chain_name(enc.id)
-        lines.append(f"\tchain {chain} {{")
+        frag = _chain_name(enc.id)
+        members = ", ".join(enc.spec.members) or "(none configured)"
+        lines.append(f"\tset bdos_{frag}_src {{")
+        lines.append("\t\ttype ipv4_addr")
+        lines.append("\t\tflags interval")
+        lines.append(f'\t\t# populate with source addrs of members: {members}')
+        lines.append("\t}")
+
+    # Per-enclave verdict chains (regular chains, no hook).
+    for enc in ordered:
+        frag = _chain_name(enc.id)
+        lines.append(f"\tchain {frag}_egress {{")
         lines.append(f"\t\t# enclave {enc.id}")
-        lines.append("\t\ttype filter hook output priority filter; policy drop;")
-        # Let replies to already-permitted flows return.
         lines.append("\t\tct state established,related accept")
         if enc.sealed:
             lines.append(f"\t\t# SEALED: black domain {enc.id} denies all egress")
@@ -66,31 +88,46 @@ def compile_nftables(enclaves: Iterable[Enclave]) -> str:
         lines.append(f'\t\tcounter drop comment "bdos {enc.id} default-deny egress"')
         lines.append("\t}")
 
+    # Single base output chain: accept by default, dispatch members into enclaves.
+    lines.append("\tchain output {")
+    lines.append("\t\ttype filter hook output priority filter; policy accept;")
+    for enc in ordered:
+        frag = _chain_name(enc.id)
+        lines.append(f"\t\tip saddr @bdos_{frag}_src jump {frag}_egress")
+    lines.append("\t\t# non-member traffic falls through to policy accept")
+    lines.append("\t}")
+
     lines.append("}")
     lines.append("")
     return "\n".join(lines)
 
 
 class EnclaveRouter:
-    """Routes members to their enclave and applies the enclave's egress policy."""
+    """Routes members to their enclave(s) and applies the strictest egress policy."""
 
     def __init__(self, enclaves: Iterable[Enclave]) -> None:
         self.enclaves: list[Enclave] = list(enclaves)
 
+    def enclaves_for(self, member: str) -> list[Enclave]:
+        """Return every enclave that contains ``member`` (usually zero or one)."""
+        return [e for e in self.enclaves if e.contains(member)]
+
     def enclave_for(self, member: str) -> Optional[Enclave]:
         """Return the first enclave that contains ``member``, or ``None``."""
-        for enclave in self.enclaves:
-            if enclave.contains(member):
-                return enclave
-        return None
+        matches = self.enclaves_for(member)
+        return matches[0] if matches else None
 
     def decide(self, member: str, dst: str) -> Verdict:
         """Decide whether ``member`` may reach ``dst``.
 
-        Members inside an enclave are held to its egress policy; members that
-        belong to no enclave are unsegmented and allowed to pass.
+        Folds the egress verdicts of *all* enclaves that contain ``member`` so
+        the most restrictive wins; a member in no enclave is unsegmented and
+        allowed to pass.
         """
-        enclave = self.enclave_for(member)
-        if enclave is None:
+        matches = self.enclaves_for(member)
+        if not matches:
             return Verdict.allow(reason="unsegmented", member=member, dst=dst)
-        return enclave.decide_egress(dst)
+        verdict = matches[0].decide_egress(dst)
+        for enclave in matches[1:]:
+            verdict = verdict.combine(enclave.decide_egress(dst))
+        return verdict

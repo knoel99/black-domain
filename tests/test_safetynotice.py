@@ -112,17 +112,49 @@ def test_replay_is_rejected():
     raise AssertionError("expected ReplayError on second use")
 
 
-def test_replay_cache_is_bounded_and_evicts():
+def test_replay_cache_never_evicts_a_live_nonce():
+    # A still-valid spent nonce must never be re-accepted, even under a tiny cache.
+    clk = ManualClock()
+    issuer = _issuer(clk)
+    verifier = _verifier(clk, issuer, replay_cache_size=2, clock_skew=5.0)
+    first = issuer.mint("a", "admin", "r", ttl=100.0)
+    assert verifier.verify(first, "a", "admin", "r").allowed
+    try:
+        verifier.verify(first, "a", "admin", "r")
+    except ReplayError:
+        return
+    raise AssertionError("a still-valid nonce was replayed after size pressure")
+
+
+def test_replay_cache_fails_closed_when_full_of_live_nonces():
+    # Rather than silently drop a live nonce (which would reopen replay), the
+    # verifier refuses once the cache is full of still-valid nonces.
     clk = ManualClock()
     issuer = _issuer(clk)
     verifier = _verifier(clk, issuer, replay_cache_size=2)
-    first = issuer.mint("a", "admin", "r")
-    verifier.verify(first, "a", "admin", "r")
-    # Spend two more nonces, evicting the first from the bounded cache.
-    verifier.verify(issuer.mint("a", "admin", "r"), "a", "admin", "r")
-    verifier.verify(issuer.mint("a", "admin", "r"), "a", "admin", "r")
-    # The first nonce has aged out, so it is no longer flagged as a replay.
+    verifier.verify(issuer.mint("a", "admin", "r", ttl=100.0), "a", "admin", "r")
+    verifier.verify(issuer.mint("a", "admin", "r", ttl=100.0), "a", "admin", "r")
+    try:
+        verifier.verify(issuer.mint("a", "admin", "r", ttl=100.0), "a", "admin", "r")
+    except AttestationError:
+        return
+    raise AssertionError("expected fail-closed AttestationError when cache full of live nonces")
+
+
+def test_expired_nonce_is_pruned_then_rejected_by_window():
+    # Once a nonce's window closes it may be forgotten -- but re-presenting it is
+    # then rejected by the window check, never accepted.
+    clk = ManualClock()
+    issuer = _issuer(clk)
+    verifier = _verifier(clk, issuer, replay_cache_size=2, clock_skew=5.0)
+    first = issuer.mint("a", "admin", "r", ttl=10.0)
     assert verifier.verify(first, "a", "admin", "r").allowed
+    clk.advance(100.0)  # past not_after + skew
+    try:
+        verifier.verify(first, "a", "admin", "r")
+    except ExpiredError:
+        return
+    raise AssertionError("expected ExpiredError for a re-presented expired notice")
 
 
 def test_scope_mismatch_on_action_class():

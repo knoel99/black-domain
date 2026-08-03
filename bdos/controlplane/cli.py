@@ -16,7 +16,10 @@ purely through its exit code (``0`` allow/delay, ``3`` deny/quarantine).
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import socket
+import sys
 from typing import Optional
 
 from bdos.core import crypto
@@ -141,7 +144,32 @@ def _cmd_verify(args) -> int:
 
 
 def _cmd_status(args) -> int:
-    """Print a snapshot of the live control-plane state."""
+    """Print a snapshot of the live control-plane state.
+
+    If a control-plane socket is configured (``--socket`` / ``$BDOS_SOCKET``) and
+    reachable, this reports the *running* server's live state; otherwise it spins
+    up a local plane and reports its (fresh) state.
+    """
+    socket_path = getattr(args, "socket", None) or os.environ.get("BDOS_SOCKET")
+    if socket_path:
+        try:
+            snap = _socket_request(socket_path, {"op": "status"})
+        except OSError as exc:
+            print(f"status: control plane at {socket_path} unreachable ({exc})", file=sys.stderr)
+        else:
+            print("BDOS control plane status (live, via socket)")
+            print(f"  issuer kid    : {snap.get('issuer_kid')}")
+            print(f"  mtd epoch     : {snap.get('mtd_epoch')}")
+            print(f"  events logged : {snap.get('events')}")
+            print(f"  log intact    : {snap.get('log_intact')}")
+            print(f"  quarantined   : {', '.join(snap.get('quarantined', [])) or '(none)'}")
+            enclaves = snap.get("enclaves", {})
+            if enclaves:
+                print("  enclaves:")
+                for eid, sealed in enclaves.items():
+                    print(f"    - {eid:<16} {'SEALED (one-way)' if sealed else 'open'}")
+            return _EXIT_OK
+
     plane = ControlPlane(_load_config(args.config))
     snap = plane.status()
     print("BDOS control plane status")
@@ -186,14 +214,66 @@ def _cmd_seal(args) -> int:
     return _EXIT_OK
 
 
-def _cmd_guard(args) -> int:
-    """Evaluate one request through the plane; spend the delay; signal via exit code.
+def _socket_request(path: str, req: dict) -> dict:
+    """Send one JSON request to a running ``bdosd`` and return its reply."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(60.0)
+        sock.connect(path)
+        sock.sendall((json.dumps(req) + "\n").encode())
+        reply = sock.makefile("r").readline()
+    if not reply:
+        raise OSError("empty reply from bdosd")
+    return json.loads(reply)
 
-    This is the verb ``os/bin/bdos-exec`` invokes. It returns ``0`` when the
-    action may proceed (the gateway has already spent any imposed delay) and
-    ``3`` when it is denied or quarantined, so command interposition can fail
-    closed on a hard verdict.
+
+def _cmd_guard(args) -> int:
+    """Evaluate one request; signal the outcome via exit code (0 proceed, 3 refuse).
+
+    This is the verb ``os/bin/bdos-exec`` invokes. When a control-plane socket is
+    configured (``--socket`` or ``$BDOS_SOCKET``) the request is sent to the
+    long-lived ``bdosd`` so throttle/Sentinel/replay state is shared across every
+    call on the host -- the only correct way to enforce. If that socket is
+    configured but unreachable the guard **fails closed** (exit 3) unless
+    ``--local`` is given. With no socket configured it falls back to a local,
+    *stateless* plane (a single-shot check that does not accumulate across
+    invocations) and says so on stderr.
     """
+    socket_path = args.socket or os.environ.get("BDOS_SOCKET")
+    req = {
+        "op": "authorize",
+        "principal": args.principal,
+        "kind": args.kind,
+        "action_class": args.action_class,
+        "resource": args.resource,
+        "notice": args.notice or None,
+    }
+
+    if socket_path:
+        try:
+            resp = _socket_request(socket_path, req)
+        except OSError as exc:
+            if not args.local:
+                print(
+                    f"guard: control plane at {socket_path} unreachable ({exc}); failing closed",
+                    file=sys.stderr,
+                )
+                return _EXIT_DENY
+            print(
+                f"guard: {socket_path} unreachable ({exc}); falling back to a local stateless check",
+                file=sys.stderr,
+            )
+        else:
+            label = str(resp.get("decision", "deny")).upper()
+            print(f"{label}  delay={resp.get('delay_seconds', 0.0):.2f}s  {resp.get('reason', '')}")
+            return _EXIT_OK if resp.get("allowed") else _EXIT_DENY
+
+    # Local, stateless fallback: correct for a single request, but state does not
+    # persist across invocations -- run `bdosd --serve` for real enforcement.
+    print(
+        "guard: using a local ephemeral plane (state is NOT shared across calls; "
+        "run 'bdosd --serve' for stateful enforcement)",
+        file=sys.stderr,
+    )
     plane = ControlPlane(_load_config(args.config))
     principal = _principal(args.principal, args.kind)
     notice = SafetyNotice.decode(args.notice) if args.notice else None
@@ -285,6 +365,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("status", help="print live control-plane status")
     p.add_argument("--config", help="path to a bdos.toml policy")
+    p.add_argument("--socket", help="query a running bdosd (default: $BDOS_SOCKET)")
     p.set_defaults(func=_cmd_status)
 
     p = sub.add_parser("seal", help="seal an enclave into a one-way door")
@@ -299,6 +380,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--resource", default="")
     p.add_argument("--notice", help="an encoded safety notice, if the class requires one")
     p.add_argument("--config", help="path to a bdos.toml policy")
+    p.add_argument("--socket", help="bdosd control-plane socket (default: $BDOS_SOCKET)")
+    p.add_argument(
+        "--local",
+        action="store_true",
+        help="fall back to a local stateless check if the socket is unreachable (default: fail closed)",
+    )
     p.set_defaults(func=_cmd_guard)
 
     p = sub.add_parser("simulate", help="run a scripted rogue-agent burst")

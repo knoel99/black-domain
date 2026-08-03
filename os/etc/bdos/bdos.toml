@@ -35,6 +35,12 @@ quota_capacity = { read = 1000.0, write = 60.0, admin = 10.0, exfil = 3.0 }
 # creates a queue the attacker cannot outrun; a low-rate human never touches it.
 quota_refill_per_sec = { read = 50.0, write = 1.0, admin = 0.05, exfil = 0.01 }
 
+# Classes for which SATURATING the quota (a required wait beyond max_delay) is a
+# hard DENY rather than a capped delay -- so privileged throughput is bounded to
+# the refill rate, not to one burst per max_delay.
+deny_on_saturation = ["admin", "exfil"]
+max_principals = 100000      # LRU bound on tracked principals (defeats id-rotation memory DoS)
+
 # --------------------------------------------------------------------------
 # Safety Notice -- proof of legitimacy, not proof of work.
 # Privileged actions must carry an unforgeable, scoped, single-use Ed25519
@@ -99,3 +105,6 @@ seal_threshold = 200.0           # score at which the associated enclave is seal
 decay_half_life_seconds = 300.0  # a quiet principal bleeds back toward zero
 auto_contain = true              # true: swing autonomously; false: recommend, human confirms
 suspicion_delay_factor = 5.0     # Lightspeed delay multiplier applied to a quarantined principal
+hard_signal_quarantine = 1       # canary trips that quarantine at once, decay-immune (1 = a single trip)
+enclave_aggregate_threshold = 150.0  # summed hostile pressure per enclave that seals it (defeats id-rotation)
+max_principals = 100000          # LRU bound on tracked principals

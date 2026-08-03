@@ -9,6 +9,14 @@ score crosses a threshold the Sentinel escalates on a ladder: first quarantine
 (raise the principal's Lightspeed suspicion so every further action is
 crushingly slow), then seal the associated black-domain enclave outright.
 
+Two mechanisms harden this against a patient or shape-shifting attacker. A
+*decay-immune hard-signal counter* means a single unambiguously hostile event (a
+tripped canary) contains at once, no matter how slowly it is paced -- decay can
+never erode a high-confidence signal below the line. And a *per-enclave aggregate*
+sums hostile pressure against each protected enclave across all principals, so an
+attacker who rotates principal ids to keep each one under the per-principal
+threshold still trips containment on the enclave they are hammering.
+
 Containment happens at machine speed only when ``cfg.auto_contain`` is set. When
 it is not, the Sentinel merely *recommends* -- it emits a recommendation event
 and stays its hand, because the human holds the sword.
@@ -21,6 +29,22 @@ from typing import Iterable, Mapping, Optional, Union
 from bdos.core.clock import Clock, SystemClock
 from bdos.core.config import SentinelConfig
 from bdos.core.events import Event, EventLog, Severity
+
+# Events that are, on their own, unambiguous evidence of hostility (near-zero
+# false positives): touching a canary is never legitimate. These drive the
+# decay-immune immediate-quarantine counter. An attestation rejection is
+# deliberately NOT here -- a human who forgets a notice once should be denied,
+# not quarantined; repeated rejections still accumulate via the decaying score.
+_HARD_QUARANTINE_KINDS = ("darkforest.canary_tripped",)
+# Hostile signals that add to an enclave's aggregate pressure (the id-rotation
+# defence), even when no single principal crosses its own threshold.
+_AGGREGATE_KINDS = (
+    "darkforest.canary_tripped",
+    "safetynotice.rejected",
+    "blackdomain.action_denied",
+    "blackdomain.egress_denied",
+)
+_EPSILON = 1e-9
 
 
 class Sentinel:
@@ -35,7 +59,8 @@ class Sentinel:
     :param enclaves: how to find the enclave to seal for a principal. Either a
         mapping ``{principal_id_or_enclave_id: enclave}`` (looked up directly) or
         an iterable of enclaves (matched by ``enclave.contains(principal_id)``).
-        Each enclave need only provide ``seal()`` and a ``sealed`` flag.
+        Each enclave need only provide ``seal()``, a ``sealed`` flag, and ideally
+        an ``id``/``spec.id``.
     :param log: the event log the Sentinel writes its own containment events to.
         Usually the same log it observes; :meth:`attach` sets it if unset.
     """
@@ -67,10 +92,15 @@ class Sentinel:
         self.log = log
         # principal_id -> (score_at_stamp, stamp_wall_time)
         self._scores: dict[str, tuple[float, float]] = {}
+        # principal_id -> count of high-confidence hostile signals (no decay)
+        self._hard_signals: dict[str, int] = {}
+        # enclave_id -> aggregate hostile pressure across all principals (no decay)
+        self._enclave_scores: dict[str, float] = {}
         self._quarantined: set[str] = set()
-        # Latches so each rung of the ladder fires exactly once per principal.
+        # Latches so each rung of the ladder fires exactly once.
         self._acted_quarantine: set[str] = set()
         self._acted_seal: set[str] = set()
+        self._acted_enclave_seal: set[str] = set()
         self._enclaves, self._enclave_list = self._normalize_enclaves(enclaves)
 
     # -- wiring ---------------------------------------------------------
@@ -99,16 +129,27 @@ class Sentinel:
             return
         now = event.ts
         points = self._score_event(event)
-        current = self._decayed(pid, now)
-        self._scores[pid] = (current + points, now)
+
+        new_score = self._decayed(pid, now) + points
+        if new_score < _EPSILON and not self._is_sticky(pid):
+            self._scores.pop(pid, None)
+        else:
+            self._scores[pid] = (new_score, now)
+
+        if event.kind in _HARD_QUARANTINE_KINDS:
+            self._hard_signals[pid] = self._hard_signals.get(pid, 0) + 1
+        if event.kind in _AGGREGATE_KINDS:
+            enclave = self._enclave_for_event(event, pid)
+            eid = self._enclave_id(enclave)
+            if eid is not None:
+                self._enclave_scores[eid] = self._enclave_scores.get(eid, 0.0) + points
+
         self._escalate(pid, now)
+        self._escalate_enclave(event, pid, now)
+        self._bound_state(now)
 
     def score_of(self, principal_id: str, now: Optional[float] = None) -> float:
-        """Return ``principal_id``'s anomaly score decayed to ``now``.
-
-        ``now`` defaults to the clock's wall time, so a score read long after
-        the last event reflects the decay that has elapsed since.
-        """
+        """Return ``principal_id``'s anomaly score decayed to ``now``."""
         if now is None:
             now = self.clock.wall()
         return self._decayed(principal_id, now)
@@ -124,12 +165,7 @@ class Sentinel:
 
     # -- scoring internals ---------------------------------------------
     def _score_event(self, event: Event) -> float:
-        """Points a single event contributes -- the strongest matching signal.
-
-        The kind-specific, capped-Lightspeed, and severity signals are combined
-        by taking the maximum so a single event is scored by its worst aspect
-        rather than double-counted.
-        """
+        """Points a single event contributes -- the strongest matching signal."""
         points = self._KIND_SCORES.get(event.kind, 0.0)
         if event.kind.startswith("lightspeed.") and event.data.get("capped") is True:
             points = max(points, self._CAPPED_LIGHTSPEED)
@@ -146,25 +182,70 @@ class Sentinel:
             return value
         return value * (0.5 ** ((now - stamp) / half))
 
-    # -- escalation ladder ---------------------------------------------
+    def _is_sticky(self, principal_id: str) -> bool:
+        """Principals we must never forget: already contained or hard-flagged."""
+        return (
+            principal_id in self._quarantined
+            or principal_id in self._acted_quarantine
+            or self._hard_signals.get(principal_id, 0) > 0
+        )
+
+    # -- state bounding -------------------------------------------------
+    def _bound_state(self, now: float) -> None:
+        """Cap the number of tracked principals; evict the coldest non-sticky."""
+        cap = max(1, self.cfg.max_principals)
+        if len(self._scores) <= cap:
+            return
+        evictable = [
+            (self._decayed(pid, now), pid)
+            for pid in self._scores
+            if not self._is_sticky(pid)
+        ]
+        evictable.sort()
+        for _, pid in evictable[: len(self._scores) - cap]:
+            self._scores.pop(pid, None)
+
+    # -- escalation ladder (per principal) -----------------------------
     def _escalate(self, principal_id: str, now: float) -> None:
         """Apply the quarantine-then-seal ladder for the current score."""
         score = self._decayed(principal_id, now)
+        hard = self._hard_signals.get(principal_id, 0)
 
-        if (
+        crosses_quarantine = (
             score >= self.cfg.quarantine_threshold
-            and principal_id not in self._acted_quarantine
-        ):
+            or hard >= self.cfg.hard_signal_quarantine
+        )
+        if crosses_quarantine and principal_id not in self._acted_quarantine:
             self._acted_quarantine.add(principal_id)
             self._quarantine(principal_id, score, now)
 
         if score >= self.cfg.seal_threshold and principal_id not in self._acted_seal:
             self._acted_seal.add(principal_id)
-            self._seal_enclave(principal_id, score, now)
+            self._seal_enclave(principal_id, self._enclave_for(principal_id), score, now,
+                               reason=f"per-principal score {score:.1f}")
+
+    def _escalate_enclave(self, event: Event, principal_id: str, now: float) -> None:
+        """Seal an enclave whose aggregate hostile pressure crosses the line.
+
+        This is the id-rotation defence: N principals each staying below the
+        per-principal threshold still sum past ``enclave_aggregate_threshold`` on
+        the enclave they are attacking.
+        """
+        enclave = self._enclave_for_event(event, principal_id)
+        eid = self._enclave_id(enclave)
+        if eid is None or eid in self._acted_enclave_seal:
+            return
+        if self._enclave_scores.get(eid, 0.0) >= self.cfg.enclave_aggregate_threshold:
+            self._acted_enclave_seal.add(eid)
+            self._seal_enclave(
+                principal_id, enclave, self._enclave_scores[eid], now,
+                reason=f"enclave aggregate pressure {self._enclave_scores[eid]:.1f}",
+            )
 
     def _quarantine(self, principal_id: str, score: float, now: float) -> None:
         """Contain (or, without auto-contain, merely recommend containing)."""
-        data = {"score": round(score, 4), "threshold": self.cfg.quarantine_threshold}
+        data = {"score": round(score, 4), "threshold": self.cfg.quarantine_threshold,
+                "hard_signals": self._hard_signals.get(principal_id, 0)}
         if not self.cfg.auto_contain:
             self._emit(
                 "sentinel.recommend_quarantine",
@@ -187,31 +268,34 @@ class Sentinel:
             now,
         )
 
-    def _seal_enclave(self, principal_id: str, score: float, now: float) -> None:
-        """Seal the principal's enclave (or recommend it) at machine speed."""
-        enclave = self._enclave_for(principal_id)
+    def _seal_enclave(self, principal_id: str, enclave, score: float, now: float, reason: str) -> None:
+        """Seal an enclave (or recommend it) at machine speed."""
         data = {
             "score": round(score, 4),
-            "threshold": self.cfg.seal_threshold,
             "enclave": self._enclave_id(enclave),
+            "trigger": reason,
         }
         if not self.cfg.auto_contain:
             self._emit(
                 "sentinel.recommend_seal",
                 Severity.WARNING,
                 principal_id,
-                f"recommend sealing enclave for {principal_id} (anomaly score {score:.1f})",
+                f"recommend sealing enclave for {principal_id} ({reason})",
                 data,
                 now,
             )
             return
-        if enclave is not None and not getattr(enclave, "sealed", False):
+        # If the enclave is already sealed (e.g. the per-principal rung fired
+        # first, or the aggregate rung), don't emit a second seal event.
+        if enclave is not None and getattr(enclave, "sealed", False):
+            return
+        if enclave is not None:
             enclave.seal()
         self._emit(
             "sentinel.seal",
             Severity.CRITICAL,
             principal_id,
-            f"sealed enclave for {principal_id} (anomaly score {score:.1f})",
+            f"sealed enclave for {principal_id} ({reason})",
             data,
             now,
         )
@@ -244,6 +328,13 @@ class Sentinel:
             if callable(contains) and contains(principal_id):
                 return enclave
         return None
+
+    def _enclave_for_event(self, event: Event, principal_id: str) -> Optional[object]:
+        """Resolve the enclave an event pertains to (event data, then principal)."""
+        eid = event.data.get("enclave")
+        if eid and eid in self._enclaves:
+            return self._enclaves[eid]
+        return self._enclave_for(principal_id)
 
     @staticmethod
     def _enclave_id(enclave: Optional[object]) -> Optional[str]:

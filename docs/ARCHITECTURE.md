@@ -157,13 +157,21 @@ attacker loses the asymmetry that made autonomy worth it.
 - `LightspeedThrottle` (`throttle.py`) turns that score into delay:
   `base_delay + burst_penalty * tier_multiplier * score * agent_factor`, where
   the per-class `tier_multiplier` is `{read: 0, write: 1, admin: 3, exfil: 8}`
-  and declared agents carry a further `2x`. In parallel a per-`(principal,
-  class)` `TokenBucket` supplies *backpressure*: consuming past empty returns the
-  time until the balance recovers, so sustained abuse creates a queue the
-  attacker cannot outrun (default quotas: `read` 1000 cap / 50 refill down to
-  `exfil` 3 cap / 0.01 refill). The imposed delay is `max(progressive,
-  backpressure) * suspicion`, clamped to `max_delay` (30s); when the clamp bites,
-  the verdict is flagged `capped` -- a signal the Sentinel scores.
+  and the `agent_factor` is `2x` for a principal that is *either* declared agentic
+  *or* behaving like one -- `burst_score >= 1` -- so claiming `kind=human` cannot
+  buy the discount for a machine cadence (`looks_agentic` is wired into the
+  decision, not merely advisory). In parallel a per-`(principal, class)`
+  `TokenBucket` supplies *backpressure*: consuming past empty returns the time
+  until the balance recovers, with the debt floored at `-capacity` so a burst
+  cannot inflict days of carry-over on the next legitimate request (default
+  quotas: `read` 1000 cap / 50 refill down to `exfil` 3 cap / 0.01 refill). The
+  imposed delay is `max(progressive, backpressure) * suspicion`, clamped to
+  `max_delay` (30s); when the clamp bites, the verdict is flagged `capped` -- a
+  signal the Sentinel scores. Crucially, for the `deny_on_saturation` classes
+  (`admin`, `exfil` by default) a *quota saturation* -- a required wait beyond
+  `max_delay` -- is not a capped delay but a hard **DENY**: throughput on a
+  privileged class is bounded to the refill rate, not to one burst per
+  `max_delay`.
 - `LightspeedGateway` (`gateway.py`) is the enforcement front end: it evaluates,
   actually *spends* the delay via `clock.sleep`, and logs a `lightspeed.guard`
   event so delay pressure is visible.
@@ -205,10 +213,15 @@ can afford and a throttled agent cannot fake into legitimacy.
   authenticates the `issuer_kid` and signature *first*, then rejects on
   revocation, scope mismatch, expiry (widened by `clock_skew`), or replay,
   raising the precise error subclass in each case; on success it records the
-  nonce in a bounded replay cache so it can never be spent twice. `guard()` is
+  nonce in an *expiry-aware* replay cache -- a spent nonce is remembered until its
+  window closes (after which the window check rejects it anyway), a still-valid
+  nonce is *never* evicted, and if the cache ever fills with live nonces the
+  verifier **fails closed** rather than silently reopen replay. `guard()` is
   the safe front end: it never raises, folds any failure into `Verdict.deny`, and
   writes `safetynotice.verified` (NOTICE) or `safetynotice.rejected` (ALERT) to
-  the log so attestation pressure is visible to the Sentinel.
+  the log so attestation pressure is visible to the Sentinel. (Replay/revocation
+  state is per-process; a multi-instance deployment backs it with a shared store
+  -- see [THREAT_MODEL.md](THREAT_MODEL.md).)
 
 By config, `admin` and `exfil` actions *require* a valid notice
 (`safetynotice.require_for`).
@@ -289,6 +302,20 @@ Escalation is a latched ladder, evaluated after each observation:
   further action's Lightspeed delay by 5x -- and marks the principal contained.
 - At `seal_threshold` (default 200) it **seals** the principal's enclave outright
   via `enclave.seal()`.
+
+Two mechanisms harden this against a patient or shape-shifting attacker. A
+**decay-immune hard-signal counter** means a single unambiguous event -- a
+tripped canary, near-zero false positive by construction -- quarantines at once
+(`hard_signal_quarantine`, default 1), no matter how slowly it is paced, because
+decay can never erode a high-confidence signal below the line. (An attestation
+*rejection* is deliberately *not* such a signal: a human who forgets a notice
+once is denied, not quarantined; repeated rejections still accumulate via the
+decaying score.) And a **per-enclave aggregate** sums hostile pressure against
+each protected enclave across *all* principals, so an attacker who rotates
+principal ids to keep every one below the per-principal threshold still trips a
+seal on the enclave they are hammering (`enclave_aggregate_threshold`). Both the
+per-principal score map and the enclave map are bounded (LRU eviction of the
+coldest non-sticky principals) so id-churn cannot exhaust memory.
 
 Each rung fires exactly once per principal (via the `_acted_*` latches), and each
 emits its own event (`sentinel.quarantine` ALERT, `sentinel.seal` CRITICAL) back
@@ -372,6 +399,21 @@ wait first. Because every step logs to the same chained EventLog and the Sentine
 subscribes to it, the act of being throttled or rejected feeds the very score
 that may quarantine the principal on the *next* call -- a closed loop that tightens
 under sustained attack.
+
+**Deployment: one plane, many clients.** For that closed loop to work in
+production, all of this state -- throttle cadence, Sentinel scores, the replay
+cache -- must live in *one* long-lived process. `bdosd --serve` is that process:
+it owns a single `ControlPlane` and serves `authorize` over a unix socket
+(`$BDOS_SOCKET`). `bdosctl guard` and `os/bin/bdos-exec` are thin clients that
+send one request and relay the verdict/exit code, so every guarded command on the
+host meters against the same plane. The in-process Sentinel is part of that plane
+-- there is no separate sentinel process, because it subscribes to the plane's
+in-memory event log. If the socket is configured but the daemon is unreachable,
+the guard **fails closed** (refuses) rather than silently allow; run standalone
+with no socket, it falls back to a local, explicitly *stateless* single-shot
+check. A fresh `ControlPlane` per invocation -- the shape a naive CLI wrapper
+would take -- would reset all of this state every call and defeat the layer; the
+socket server exists precisely to avoid that.
 
 
 ## BDOS controls mapped to MITRE ATT&CK

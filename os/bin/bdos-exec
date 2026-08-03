@@ -26,6 +26,10 @@
 # Environment:
 #   BDOS_CTL       path to bdosctl            (default: bdosctl on PATH)
 #   BDOS_CTL_VERB  bdosctl subcommand to call (default: "guard")
+#   BDOS_SOCKET    unix socket of the running bdosd; inherited by `bdosctl guard`
+#                  so throttle + Sentinel state is shared across every command.
+#                  If set but unreachable, guard fails closed (exit 3). If unset,
+#                  guard uses a local stateless check (no cross-command memory).
 #   BDOS_PRINCIPAL default principal id
 #   BDOS_KIND      default principal kind
 #   BDOS_FALLBACK_DELAY  seconds of local delay to impose if bdosctl cannot

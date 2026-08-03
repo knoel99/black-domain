@@ -99,9 +99,9 @@ main() {
         warn "python3 not found -- skipping package install; do it manually later"
     fi
 
-    # 4) systemd units.
+    # 4) systemd unit. The Sentinel is not a separate service -- it runs
+    #    in-process inside bdosd (it subscribes to the plane's in-memory log).
     install_file "$OS_DIR/systemd/bdosd.service"         "$DEST_SYSTEMD/bdosd.service"         0644
-    install_file "$OS_DIR/systemd/bdos-sentinel.service" "$DEST_SYSTEMD/bdos-sentinel.service" 0644
 
     # 5) kernel hardening + module blacklist + seccomp profile.
     install_file "$OS_DIR/sysctl/99-bdos-hardening.conf" "$DEST_SYSCTL/99-bdos-hardening.conf" 0644
@@ -170,16 +170,18 @@ BDOS overlay staged. Next steps:
 
   1. Review the policy:            $EDITOR /etc/bdos/bdos.toml
   2. Generate the issuer keypair:  bdosctl keygen
-  3. Enable the daemons:
+  3. Enable the enforcement daemon (the Sentinel runs inside it):
          systemctl enable --now bdosd.service
-         systemctl enable --now bdos-sentinel.service
   4. Seal the crown-jewel enclave once first-boot provisioning is done:
          bdosctl seal crown-jewels          # one-way: it can never be reopened
   5. Sanity check:                 bdosctl status
   6. Run a rogue-agent drill:      bdosctl simulate
 
-  Interpose a sensitive command through the Lightspeed gateway with:
+  Interpose a sensitive command through the running control plane with:
+         export BDOS_SOCKET=/run/bdos/bdosd.sock
          bdos-exec -c admin -r /etc/shadow -- cat /etc/shadow
+  (bdos-exec/bdosctl guard connect to that socket so throttle + Sentinel state
+   is shared across every command; without a running bdosd they fail closed.)
 
   Hardening applied: sysctl (/etc/sysctl.d/99-bdos-hardening.conf),
   module blacklist (/etc/modprobe.d/bdos-blacklist.conf), and the default-deny

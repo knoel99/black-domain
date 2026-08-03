@@ -17,12 +17,21 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Selected by env var, not a CLI flag, so the unit never fails on argv parsing.
 Environment=BDOS_ROLE=controlplane
 Environment=BDOS_CONFIG=/etc/bdos/bdos.toml
-ExecStart=/usr/bin/bdosd
-Restart=on-failure
+# The socket every bdosctl guard / bdos-exec on this host connects to, so
+# throttle/Sentinel/replay state is shared across all requests (one plane).
+Environment=BDOS_SOCKET=/run/bdos/bdosd.sock
+# --serve runs the real enforcement server (not a banner-and-exit). The
+# in-process Sentinel is part of this plane; there is no separate sentinel
+# process, because it subscribes to this plane's in-memory event log.
+ExecStart=/usr/bin/bdosd --serve
+# Enforcement must never silently stop: a non-serving exit is a failure.
+Restart=always
 RestartSec=2
+# /run/bdos for the unix socket, owned by the service user.
+RuntimeDirectory=bdos
+RuntimeDirectoryMode=0750
 
 # -- identity: run as the unprivileged bdos service user ---------------------
 User=bdos
