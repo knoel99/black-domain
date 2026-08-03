@@ -1,0 +1,101 @@
+# BDOS policy -- /etc/bdos/bdos.toml
+#
+# This is the single source of truth for the doctrine BDOS enforces on this
+# host. It is parsed by bdos.core.config.load() and validated at boot, so a
+# malformed policy fails fast here rather than silently at runtime. Every key
+# and section below maps 1:1 onto the dataclasses in bdos/core/config.py --
+# unknown keys or sections are rejected on load.
+#
+# The defaults encode the BDOS doctrine: reads are free, writes are slowed,
+# admin/exfil actions are slowed hard AND require a signed safety notice, the
+# crown jewels live behind one-way segmentation, and a Sentinel holds the sword.
+# Tune the numbers to your environment; keep the shape.
+
+# --------------------------------------------------------------------------
+# Lightspeed -- "reduce the speed of light in the vacuum".
+# Strips the attacker's one decisive edge over a human: throughput. Delay is
+# invisible to a human (a few actions a minute) and crushing to an agent (which
+# wants thousands). The toll is an aggression tax proportional to how
+# machine-like and bursty the cadence looks.
+# --------------------------------------------------------------------------
+[lightspeed]
+base_delay = 0.0             # floor delay added to every metered action (seconds)
+max_delay = 30.0             # hard clamp; when it bites, the guard is flagged `capped`
+window_seconds = 60.0        # rolling window over which cadence is measured
+burst_penalty = 0.75         # seconds of delay per unit of burst score
+human_cadence_threshold = 1.0  # mean inter-arrival (s) at/above which a cadence looks human
+
+# Per-action-class multiplier on the burst penalty. Reads are free by
+# construction (0.0); the cost lands on writes and lands hard on admin/exfil.
+tier_multiplier = { read = 0.0, write = 1.0, admin = 3.0, exfil = 8.0 }
+
+# Token-bucket backpressure per action class: burst capacity (tokens) ...
+quota_capacity = { read = 1000.0, write = 60.0, admin = 10.0, exfil = 3.0 }
+# ... and sustained refill rate (tokens/second). Sustained abuse past empty
+# creates a queue the attacker cannot outrun; a low-rate human never touches it.
+quota_refill_per_sec = { read = 50.0, write = 1.0, admin = 0.05, exfil = 0.01 }
+
+# --------------------------------------------------------------------------
+# Safety Notice -- proof of legitimacy, not proof of work.
+# Privileged actions must carry an unforgeable, scoped, single-use Ed25519
+# capability. A stolen credential is inert without a co-signed, unexpired,
+# unspent notice; a prompt-injected agent can request an admin action but
+# cannot manufacture the signature that authorizes it.
+# --------------------------------------------------------------------------
+[safetynotice]
+default_ttl = 300.0          # notice lifetime (seconds) when the issuer sets none
+clock_skew = 5.0             # tolerance (seconds) widening the validity window both ways
+require_for = ["admin", "exfil"]  # action classes that MUST present a valid notice
+replay_cache_size = 100000   # bounded set of spent nonces (never reusable)
+
+# --------------------------------------------------------------------------
+# Dark Forest -- reduce legibility, lay traps.
+# A moving target so the real system is never at a fixed, mappable location,
+# plus deception so the ground around it is salted with bait only an intruder
+# would ever touch.
+# --------------------------------------------------------------------------
+[darkforest]
+mtd_epoch_seconds = 300.0    # rendezvous (port+path) rotates every epoch
+mtd_secret = ""              # empty => generated at boot; set a hex/base64 secret for reproducibility
+mtd_port_low = 20000         # inclusive low bound of the rotating port range
+mtd_port_high = 60000        # exclusive high bound of the rotating port range
+services = ["api", "admin", "db"]        # services whose rendezvous rotates
+canary_paths = ["/etc/bdos/credentials.bak", "/srv/backup/db_dump.sql"]  # planted bait
+
+# --------------------------------------------------------------------------
+# Black Domain -- seal the crown jewels behind a one-way door.
+# Each enclave is default-deny egress and can be SEALED into a one-way door:
+# reads may still flow inward, but every mutation and every outbound packet is
+# refused, and it can never be reopened. This is where the lethal trifecta's
+# outbound leg is amputated around the data that matters.
+# --------------------------------------------------------------------------
+[blackdomain]
+# Enclaves are an array of tables. `id` must be unique across the array.
+# `members` are the principals/hosts fenced inside; `egress_allow` is the exact
+# allowlist of destinations (CIDRs / hostnames) they may reach while open.
+
+[[blackdomain.enclaves]]
+id = "crown-jewels"
+members = ["svc-db", "svc-secrets"]
+egress_allow = []            # no egress at all -- data falls in, nothing climbs out
+sealed = false               # set true (or `bdosctl seal crown-jewels`) to close the door
+
+[[blackdomain.enclaves]]
+id = "control-plane"
+members = ["svc-k8s-api"]
+egress_allow = ["10.0.0.0/8"]  # may reach the internal management network only
+sealed = false
+
+# --------------------------------------------------------------------------
+# Sentinel -- who holds the sword.
+# Folds every logged event into a per-principal, time-decaying anomaly score and
+# contains at machine speed. `auto_contain` is the explicit answer to who is
+# allowed to swing the sword: true = autonomous reflex, false = recommend only
+# and let a human confirm the cut.
+# --------------------------------------------------------------------------
+[sentinel]
+quarantine_threshold = 100.0     # score at which a principal is quarantined (5x delay)
+seal_threshold = 200.0           # score at which the associated enclave is sealed
+decay_half_life_seconds = 300.0  # a quiet principal bleeds back toward zero
+auto_contain = true              # true: swing autonomously; false: recommend, human confirms
+suspicion_delay_factor = 5.0     # Lightspeed delay multiplier applied to a quarantined principal

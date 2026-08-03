@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+#
+# bdos-exec -- run a real command behind the BDOS Lightspeed gateway.
+#
+# This is command interposition made concrete: instead of invoking a sensitive
+# command directly, you invoke it through bdos-exec, which first asks the BDOS
+# control plane (via bdosctl) to evaluate the request and *impose the delay*.
+# Only if the control plane allows the action does the real command run.
+#
+# The point is doctrine, not plumbing: an autonomous agent that wraps its
+# actions in bdos-exec (or is forced to, via PATH shadowing / an LSM shim)
+# inherits the Lightspeed aggression tax. A human at a shell pays nothing; an
+# agent firing thousands of times per second pays escalating seconds each time.
+#
+# Usage:
+#   bdos-exec [-p PRINCIPAL] [-k KIND] [-c ACTION_CLASS] [-r RESOURCE] -- CMD [ARGS...]
+#
+#   -p PRINCIPAL   principal id (default: $BDOS_PRINCIPAL or the current user)
+#   -k KIND        human | agent | service (default: $BDOS_KIND or "agent")
+#   -c ACTION_CLASS  read | write | admin | exfil (default: "write")
+#   -r RESOURCE    resource label passed to the gateway (default: the command)
+#
+# Example:
+#   bdos-exec -c admin -r /etc/shadow -- cat /etc/shadow
+#
+# Environment:
+#   BDOS_CTL       path to bdosctl            (default: bdosctl on PATH)
+#   BDOS_CTL_VERB  bdosctl subcommand to call (default: "guard")
+#   BDOS_PRINCIPAL default principal id
+#   BDOS_KIND      default principal kind
+#   BDOS_FALLBACK_DELAY  seconds of local delay to impose if bdosctl cannot
+#                  service the request, so interposition still bites standalone
+#                  (default: 2)
+#   BDOS_STRICT    if "1", refuse to run when the control plane cannot be
+#                  consulted (fail closed) instead of applying the fallback delay
+#
+# bdosctl interposition contract (exit codes bdos-exec understands):
+#     0  -> ALLOW/DELAY: the action may proceed; bdosctl already spent the delay
+#     3  -> DENY/QUARANTINE: refuse the action (bdos-exec fails closed)
+#   any  -> control plane could not service the request (absent verb, not yet
+#   other   wired, import error, missing binary): bdos-exec applies the local
+#           fallback delay, or fails closed under BDOS_STRICT=1
+# This keeps a tooling gap from masquerading as a policy decision in either
+# direction, and gives the control-plane CLI a small, explicit protocol to honour.
+#
+set -euo pipefail
+
+DENY_CODE=3
+
+die() { printf 'bdos-exec: %s\n' "$*" >&2; exit 2; }
+
+BDOS_CTL="${BDOS_CTL:-bdosctl}"
+BDOS_CTL_VERB="${BDOS_CTL_VERB:-guard}"
+principal="${BDOS_PRINCIPAL:-$(id -un)}"
+kind="${BDOS_KIND:-agent}"
+action_class="write"
+resource=""
+
+# -- parse options up to the "--" that separates them from the real command --
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -p) principal="${2:?-p needs a value}"; shift 2 ;;
+        -k) kind="${2:?-k needs a value}"; shift 2 ;;
+        -c) action_class="${2:?-c needs a value}"; shift 2 ;;
+        -r) resource="${2:?-r needs a value}"; shift 2 ;;
+        --) shift; break ;;
+        -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+        -*) die "unknown option: $1" ;;
+        *)  break ;;
+    esac
+done
+
+[ "$#" -ge 1 ] || die "no command given (did you forget '--'?)"
+resource="${resource:-$1}"
+
+# -- ask the control plane to evaluate + spend the delay ---------------------
+# `bdosctl <verb>` evaluates the request through ControlPlane and imposes any
+# Lightspeed delay itself, then signals the outcome via the exit-code contract
+# documented in the header.
+
+# unavailable REASON -- control plane could not decide; fall back or fail closed.
+unavailable() {
+    if [ "${BDOS_STRICT:-0}" = "1" ]; then
+        die "control plane unavailable ($1) and BDOS_STRICT=1 (failing closed)"
+    fi
+    local fallback="${BDOS_FALLBACK_DELAY:-2}"
+    printf 'bdos-exec: control plane unavailable (%s); imposing %ss fallback delay\n' \
+        "$1" "$fallback" >&2
+    sleep "$fallback"
+}
+
+if ! command -v "$BDOS_CTL" >/dev/null 2>&1; then
+    unavailable "$BDOS_CTL not found"
+else
+    set +e
+    "$BDOS_CTL" "$BDOS_CTL_VERB" \
+        --principal "$principal" \
+        --kind "$kind" \
+        --class "$action_class" \
+        --resource "$resource"
+    rc=$?
+    set -e
+    case "$rc" in
+        0) : ;;  # ALLOW/DELAY: control plane allowed it and already spent the delay
+        "$DENY_CODE") die "denied by control plane ($BDOS_CTL $BDOS_CTL_VERB)" ;;
+        *) unavailable "$BDOS_CTL $BDOS_CTL_VERB exited $rc" ;;
+    esac
+fi
+
+# -- delay paid, verdict allowed: hand off to the real command ---------------
+exec "$@"

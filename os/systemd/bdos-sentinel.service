@@ -1,0 +1,86 @@
+# BDOS Sentinel -- who holds the sword.
+#
+# The machine-speed containment reflex. It attaches to the shared event log and,
+# on every append, folds the event into the emitting principal's time-decaying
+# anomaly score; when the score crosses a threshold it quarantines (5x delay)
+# and, higher still, seals the enclave. Because the log notifies subscribers
+# synchronously, the whole loop closes in the same call stack as the offending
+# action -- the only defender fast enough to answer a machine-speed attacker.
+#
+# The Sentinel is the one component permitted to swing the sword, so it is
+# isolated in its own unit and hardened even harder than the control plane:
+# same lockdown, plus an empty capability set and a tighter syscall filter. Its
+# authority to contain lives in the daemon; its authority to touch the host does
+# not exist. See docs/ARCHITECTURE.md ("who holds the sword").
+
+[Unit]
+Description=BDOS Sentinel (machine-speed anomaly scoring + autonomous containment)
+Documentation=file:/usr/share/doc/bdos/ARCHITECTURE.md
+After=bdosd.service
+# The Sentinel is meaningless without the control plane it watches.
+Requires=bdosd.service
+PartOf=bdosd.service
+
+[Service]
+Type=simple
+Environment=BDOS_ROLE=sentinel
+Environment=BDOS_CONFIG=/etc/bdos/bdos.toml
+ExecStart=/usr/bin/bdosd
+Restart=on-failure
+RestartSec=2
+
+# -- identity ---------------------------------------------------------------
+User=bdos
+Group=bdos
+
+# -- no path to new privileges ----------------------------------------------
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SecureBits=noroot noroot-locked
+
+# -- filesystem: read-only OS, private everything ---------------------------
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectProc=invisible
+ProcSubset=pid
+# Reads the log the control plane writes; writes only its own state.
+StateDirectory=bdos
+ReadWritePaths=/var/lib/bdos
+ReadOnlyPaths=/etc/bdos /var/log/bdos
+
+# -- kernel / hardware surface removed --------------------------------------
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+KeyringMode=private
+
+# -- W^X --------------------------------------------------------------------
+MemoryDenyWriteExecute=true
+
+# -- network: the Sentinel talks to the local control plane over unix sockets
+# only; AF_INET/AF_INET6 are removed so it can never open a remote socket.
+RestrictAddressFamilies=AF_UNIX
+
+# -- syscall filter: default-deny with a minimal service allowlist ----------
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @cpu-emulation @debug @mount @swap @reboot @raw-io @clock @module
+
+# -- resource ceilings ------------------------------------------------------
+UMask=0077
+LimitNOFILE=1024
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

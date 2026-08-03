@@ -1,0 +1,82 @@
+# BDOS control-plane daemon.
+#
+# Wires every layer (Lightspeed, Safety Notice, Dark Forest, Black Domain) onto
+# one hash-chained event log and exposes the single decision point,
+# ControlPlane.authorize(). This is a long-running, privilege-light service:
+# it decides and records, it does not need the box.
+#
+# The hardening directives below are the systemd complement to the in-process
+# doctrine -- they shrink the daemon's own attack surface so a compromise of the
+# guard cannot become a compromise of the host. See docs/ARCHITECTURE.md.
+
+[Unit]
+Description=BDOS control-plane daemon (asymmetric friction + attestation + segmentation)
+Documentation=file:/usr/share/doc/bdos/ARCHITECTURE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Selected by env var, not a CLI flag, so the unit never fails on argv parsing.
+Environment=BDOS_ROLE=controlplane
+Environment=BDOS_CONFIG=/etc/bdos/bdos.toml
+ExecStart=/usr/bin/bdosd
+Restart=on-failure
+RestartSec=2
+
+# -- identity: run as the unprivileged bdos service user ---------------------
+User=bdos
+Group=bdos
+
+# -- no path to new privileges ----------------------------------------------
+NoNewPrivileges=true
+# Empty bounding set: the daemon needs no capabilities at all.
+CapabilityBoundingSet=
+AmbientCapabilities=
+SecureBits=noroot noroot-locked
+
+# -- filesystem: read-only OS, private everything ---------------------------
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectProc=invisible
+ProcSubset=pid
+# The only paths the daemon may write: its state and its append-only log.
+StateDirectory=bdos
+LogsDirectory=bdos
+ReadWritePaths=/var/lib/bdos /var/log/bdos
+ReadOnlyPaths=/etc/bdos
+
+# -- kernel / hardware surface removed --------------------------------------
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+KeyringMode=private
+
+# -- W^X: pages are never both writable and executable ----------------------
+MemoryDenyWriteExecute=true
+
+# -- network: IPv4/IPv6/unix only; block exotic address families ------------
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# -- syscall filter: default-deny with a service-safe allowlist -------------
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @cpu-emulation @debug @mount @swap @reboot @raw-io @clock @module
+
+# -- resource ceilings ------------------------------------------------------
+UMask=0077
+LimitNOFILE=4096
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target
