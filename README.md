@@ -12,20 +12,22 @@ Dans *La Mort immortelle*, une civilisation abaisse la vitesse de la lumière au
 
 1. **Pourquoi lire une fiction avec des yeux de défenseur** : ce qu'on gagne (des mécanismes isolés, un vocabulaire), ce qu'on risque (importer les axiomes avec les images), et la méthode suivie.
 2. **Le cadre** : les deux axiomes de la sociologie cosmique, la chaîne de suspicion, l'explosion technologique, la forêt sombre ; les trois réponses de l'humanité (projet Bunker, plan Domaine noir, vaisseaux à vitesse-lumière) ; ce que le domaine noir est, ce qu'il coûte et la double inversion qu'il opère.
-3. **Les principes**, chacun en quatre volets (dans la trilogie, transposition, en pratique, où l'analogie casse) et refermé sur une question à poser à son propre système :
+3. **Treize principes**, chacun en quatre volets (dans la trilogie, transposition, en pratique, où l'analogie casse) et refermé sur une question à poser à son propre système :
    - la sécurité se juge à ce qui sort, pas seulement à ce qui entre ;
    - une loi, pas une règle ; une preuve, pas une promesse ;
-   - toute émission est une coordonnée, et une émission ne se rappelle pas ;
+   - toute émission est une coordonnée : les Soleils involontaires et les coordonnées secondaires ;
+   - une émission ne se rappelle pas : la durée de vie du secret ;
    - « Ne répondez pas ! » : la réponse est l'information ;
    - le sortilège : mesurer la forêt avec un leurre ;
    - sous les intellectrons : suspecter l'instrument, coordonner hors de portée, couper en un seul geste ;
    - la clé ne doit pas être une personne : le Porte-épée, le quorum et la main morte ;
    - le Bunker protégeait d'un photoïde : modèle de menace contre propriété ;
+   - deux siècles sans défaite ne prouvent rien : l'adversaire a progressé pendant que vous ne regardiez pas ;
    - ne masse jamais la flotte, et garde un vaisseau qui peut partir ;
    - la chaîne de suspicion se déplace, elle ne s'abolit pas ;
-   - le milieu : chaque arme dégrade le commun.
-4. **Les limites de l'analogie** : ce que la forêt sombre fait mal comprendre d'Internet, et pourquoi le domaine noir est un conseil de désespoir.
-5. **Synthèse** : une grille de lecture « domaine noir » (principe, question, contrôles de référence, indicateur), les quatre postures (s'enfermer, se cacher, dissuader, coopérer), et ce qu'un défenseur devrait retenir et refuser.
+   - le milieu : chaque arme dégrade le commun, et chaque règle est la cicatrice d'une attaque.
+4. **Les limites de l'analogie** : quand un actif est réellement dans une forêt sombre et quand il ne l'est pas, ce que « cache-toi bien » fait mal comprendre d'Internet, pourquoi le domaine noir fabrique la vulnérabilité qu'il voulait éviter, et pourquoi la coopération est l'option que l'univers de Liu Cixin n'a pas.
+5. **Synthèse** : une grille de lecture « domaine noir » (principe, question, contrôles de référence, indicateur), les quatre postures (s'enfermer, se cacher, dissuader, coopérer), par où commencer, et ce qu'un défenseur devrait retenir et refuser.
 6. **Références** : romans, normes et cadres, textes juridiques, incidents et rapports, articles.
 
 ## Thèse en bref
