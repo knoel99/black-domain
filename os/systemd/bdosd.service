@@ -1,0 +1,91 @@
+# BDOS control-plane daemon.
+#
+# Wires every layer (Lightspeed, Safety Notice, Dark Forest, Black Domain) onto
+# one hash-chained event log and exposes the single decision point,
+# ControlPlane.authorize(). This is a long-running, privilege-light service:
+# it decides and records, it does not need the box.
+#
+# The hardening directives below are the systemd complement to the in-process
+# doctrine -- they shrink the daemon's own attack surface so a compromise of the
+# guard cannot become a compromise of the host. See docs/ARCHITECTURE.md.
+
+[Unit]
+Description=BDOS control-plane daemon (asymmetric friction + attestation + segmentation)
+Documentation=file:/usr/share/doc/bdos/ARCHITECTURE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=BDOS_ROLE=controlplane
+Environment=BDOS_CONFIG=/etc/bdos/bdos.toml
+# The socket every bdosctl guard / bdos-exec on this host connects to, so
+# throttle/Sentinel/replay state is shared across all requests (one plane).
+Environment=BDOS_SOCKET=/run/bdos/bdosd.sock
+# --serve runs the real enforcement server (not a banner-and-exit). The
+# in-process Sentinel is part of this plane; there is no separate sentinel
+# process, because it subscribes to this plane's in-memory event log.
+ExecStart=/usr/bin/bdosd --serve
+# Enforcement must never silently stop: a non-serving exit is a failure.
+Restart=always
+RestartSec=2
+# /run/bdos for the unix socket, owned by the service user.
+RuntimeDirectory=bdos
+RuntimeDirectoryMode=0750
+
+# -- identity: run as the unprivileged bdos service user ---------------------
+User=bdos
+Group=bdos
+
+# -- no path to new privileges ----------------------------------------------
+NoNewPrivileges=true
+# Empty bounding set: the daemon needs no capabilities at all.
+CapabilityBoundingSet=
+AmbientCapabilities=
+SecureBits=noroot noroot-locked
+
+# -- filesystem: read-only OS, private everything ---------------------------
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectProc=invisible
+ProcSubset=pid
+# The only paths the daemon may write: its state and its append-only log.
+StateDirectory=bdos
+LogsDirectory=bdos
+ReadWritePaths=/var/lib/bdos /var/log/bdos
+ReadOnlyPaths=/etc/bdos
+
+# -- kernel / hardware surface removed --------------------------------------
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+KeyringMode=private
+
+# -- W^X: pages are never both writable and executable ----------------------
+MemoryDenyWriteExecute=true
+
+# -- network: IPv4/IPv6/unix only; block exotic address families ------------
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# -- syscall filter: default-deny with a service-safe allowlist -------------
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @cpu-emulation @debug @mount @swap @reboot @raw-io @clock @module
+
+# -- resource ceilings ------------------------------------------------------
+UMask=0077
+LimitNOFILE=4096
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

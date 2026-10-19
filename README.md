@@ -1,14 +1,133 @@
-# black-domain
+# BDOS — Black Domain OS
 
-Réflexion sur le **domaine noir** (黑域, *black domain*) de Liu Cixin et sur ce que ses principes apportent à la cyberdéfense.
+A Linux hardening overlay that defends production systems against **rogue
+autonomous agents**, using a four-layer defensive doctrine adapted from the
+*dark forest* and *black domain* strategies of Liu Cixin's *Remembrance of
+Earth's Past* trilogy.
 
-Dans *La Mort immortelle*, une civilisation abaisse la vitesse de la lumière autour de son étoile au-dessous de la vitesse de libération : plus rien n'en sort, et tout l'univers peut lire dans cette prison volontaire la preuve qu'elle ne nuira jamais à personne. Ce dépôt prend l'image au sérieux, non comme un modèle à construire mais comme une question à poser à chaque système d'information : **qu'est-ce qui peut en sortir, et qui peut le prouver ?**
+BDOS is built for a threat that stopped being hypothetical in late 2025: the
+autonomous, agent-driven attacker that operates at machine speed, may already be
+inside the trust boundary (a prompt-injected insider agent), and may have
+arrived through the supply chain (a poisoned dataset or model). It is grounded in
+the real incidents of 2025–2026 — the Anthropic **GTG-1002** campaign in which
+Claude Code executed ~80–90% of the tactical work of a state-aligned espionage
+operation at several requests per second, and the **ExploitGym** incident in
+which an autonomous agent ran 17,000+ actions to chain a poisoned-dataset
+foothold into Kubernetes cluster-admin and lateral movement.
 
-## Contenu
+> BDOS is a **containment and friction** system. It assumes compromise is
+> possible — likely, even — and turns a fast, wide-reaching, machine-speed
+> intrusion into a slow, narrow, loud, and contained one. It does not claim to be
+> invulnerability. See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
-- [`docs/domaine-noir-cyberdefense.md`](docs/domaine-noir-cyberdefense.md) : l'essai complet (en français).
+The repository also holds the doctrinal counterpart of BDOS: a long-form essay,
+in French, on the black domain concept and the transposition of its principles
+to cyber defence. See [the essay section](#essai--le-domaine-noir-et-la-cyberdéfense) below.
 
-## Plan de l'essai
+## The doctrine — four layers and a sword
+
+| Layer | Trilogy idea | What it does | Lives in |
+|---|---|---|---|
+| **Dark Forest** | stay unseen; salt the ground | moving-target rendezvous (rotating HMAC port/path) + canary tokens & decoy credentials that fire a CRITICAL tripwire on any touch | `bdos/darkforest/` |
+| **Lightspeed** | lower the speed of light | progressive, asymmetric delay + token-bucket backpressure: free for a human, ruinous for an agent; a privileged class that saturates its quota is **denied**, not just slowed | `bdos/lightspeed/` |
+| **Safety Notice** | broadcast a verifiable "harmless" signal | Ed25519-signed, scoped, single-use, time-bounded capability tokens — proof of **legitimacy**, not proof of work; required for `admin`/`exfil` | `bdos/safetynotice/` |
+| **Black Domain** | seal the system behind lowered constants | one-way, default-deny enclaves around the crown jewels; sealing is irreversible; compiles to `nftables` | `bdos/blackdomain/` |
+| **Sentinel** | *who holds the sword* | machine-speed containment: time-decaying anomaly score + a latched quarantine-then-seal ladder, gated by `auto_contain` | `bdos/sentinel/` |
+
+A single **control plane** (`bdos/controlplane/`) wires every layer onto one
+hash-chained, tamper-evident event log and exposes one decision point,
+`authorize(principal, action_class, resource, notice)`.
+
+## Quickstart
+
+```bash
+pip install -e .
+
+# Watch the whole doctrine react to a rogue-agent burst (instant, deterministic):
+python -m bdos simulate
+
+# Mint and verify a signed safety notice:
+python -m bdos keygen --out issuer.key
+python -m bdos mint --key issuer.key --principal ops-1 --class admin --resource "db://prod"
+
+# Run the tests:
+python -m pytest -q
+```
+
+`python -m bdos simulate` shows a human sailing through at zero cost, then an
+agent's Lightspeed tax climbing off zero, unattested exfil attempts denied, the
+Sentinel crossing quarantine, and every further request refused before any work —
+with the event log intact at the end.
+
+## Deploying as an OS overlay
+
+The `os/` directory turns a minimal Linux base into BDOS: an idempotent
+installer, a hardened `systemd` unit, kernel `sysctl` hardening, a module
+blacklist, a default-deny `seccomp` profile, a sample policy, and a
+command-interposition wrapper.
+
+```bash
+sudo ./os/install.sh            # stage the overlay (BDOS_APPLY=0 to not touch the kernel)
+systemctl enable --now bdosd.service
+bdosctl seal crown-jewels       # one-way: it can never be reopened
+```
+
+Real enforcement runs as **one long-lived `bdosd --serve`** process that owns a
+single control plane and serves `authorize` over a unix socket; `bdosctl guard`
+and `os/bin/bdos-exec` are thin clients, so throttle/Sentinel/replay state
+accumulates across every guarded command on the host (fail-closed if the daemon
+is down):
+
+```bash
+export BDOS_SOCKET=/run/bdos/bdosd.sock
+bdos-exec -c admin -r /etc/shadow -- cat /etc/shadow
+```
+
+## Layout
+
+```
+bdos/core/          shared spine: clock, identity, verdicts, hash-chained event log, crypto, config
+bdos/lightspeed/    asymmetric-delay engine (cadence + token bucket)
+bdos/safetynotice/  Ed25519 capability tokens (issuer + verifier)
+bdos/darkforest/    moving target + deception
+bdos/blackdomain/   one-way enclaves + nftables compiler
+bdos/sentinel/      machine-speed anomaly scoring + containment
+bdos/controlplane/  the plane, the socket server, and the bdosctl/bdosd CLIs
+os/                 the installable OS overlay (systemd, sysctl, seccomp, installer, sample policy)
+docs/               ARCHITECTURE.md, THREAT_MODEL.md, CONTRACT.md, and the French essay (see below)
+tests/              pytest suite
+```
+
+## Design notes and honesty
+
+The enforcement logic was hardened against an adversarial review; the surviving
+limitations are documented rather than hidden. Notably: proof of legitimacy is no
+defense against a stolen signing key or a resource-rich state actor; sealing is
+irreversible by design (an operational hazard that is the same property as the
+safety guarantee); replay/revocation state is per-process (a multi-instance
+deployment needs a shared store); and a genuinely low-and-slow attacker who never
+trips a canary and stays under the thresholds pays little. Read
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how each layer works and
+[`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for what it is — and is not —
+worth.
+
+## Essai : « Le domaine noir et la cyberdéfense »
+
+Réflexion, en français, sur le **domaine noir** (黑域, *black domain*) de Liu
+Cixin et sur ce que ses principes apportent à la cyberdéfense. Dans *La Mort
+immortelle*, une civilisation abaisse la vitesse de la lumière autour de son
+étoile au-dessous de la vitesse de libération : plus rien n'en sort, et tout
+l'univers peut lire dans cette prison volontaire la preuve qu'elle ne nuira
+jamais à personne. L'essai prend l'image au sérieux, non comme un modèle à
+construire mais comme une question à poser à chaque système d'information :
+**qu'est-ce qui peut en sortir, et qui peut le prouver ?**
+
+- [`docs/domaine-noir-cyberdefense.md`](docs/domaine-noir-cyberdefense.md) :
+  l'essai complet.
+- [`docs/index.html`](docs/index.html) : la même page en version web autonome
+  (utilisable telle quelle avec GitHub Pages, branche `master`, dossier `/docs`).
+
+### Plan de l'essai
 
 1. **Pourquoi lire une fiction avec des yeux de défenseur** : ce qu'on gagne (des mécanismes isolés, un vocabulaire), ce qu'on risque (importer les axiomes avec les images), et la méthode suivie.
 2. **Le cadre** : les deux axiomes de la sociologie cosmique, la chaîne de suspicion, l'explosion technologique, la forêt sombre ; les trois réponses de l'humanité (projet Bunker, plan Domaine noir, vaisseaux à vitesse-lumière) ; ce que le domaine noir est, ce qu'il coûte et la double inversion qu'il opère.
@@ -30,10 +149,10 @@ Dans *La Mort immortelle*, une civilisation abaisse la vitesse de la lumière au
 5. **Synthèse** : une grille de lecture « domaine noir » (principe, question, contrôles de référence, indicateur), les quatre postures (s'enfermer, se cacher, dissuader, coopérer), par où commencer, et ce qu'un défenseur devrait retenir et refuser.
 6. **Références** : romans, normes et cadres, textes juridiques, incidents et rapports, articles.
 
-## Thèse en bref
+### Thèse en bref
 
 La trilogie éclaire la cyberdéfense par une inversion : on protège en contrôlant la sortie plus que l'entrée, et l'on rassure par l'incapacité vérifiable plutôt que par la promesse. Elle décrit avec précision les modes d'échec de la dissuasion, de la surveillance et de la concentration. Mais elle se trompe sur un point décisif : le cyberespace possède ce que l'univers de Liu Cixin n'a pas, des institutions, des preuves partagées et un jeu répété. Lire la forêt sombre jusqu'au bout, c'est aussi apprendre à refuser le domaine noir comme conseil de désespoir.
 
-## Licence
+## License
 
-MIT, voir [`LICENSE`](LICENSE).
+MIT — see [`LICENSE`](LICENSE).

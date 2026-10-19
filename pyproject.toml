@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bdos"
+version = "0.1.0"
+description = "Black Domain OS - a Linux hardening overlay that defends production systems against rogue autonomous agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Kim NOEL" }]
+keywords = ["security", "ai-agents", "zero-trust", "moving-target-defense", "deception", "hardening"]
+dependencies = ["cryptography>=41"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+bdosctl = "bdos.controlplane.cli:main"
+bdosd = "bdos.controlplane.daemon:main"
+
+[tool.setuptools.packages.find]
+include = ["bdos*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
