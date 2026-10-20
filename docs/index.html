@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Réflexion sur le domaine noir de Liu Cixin et sur la transposition de ses principes à la cyberdéfense : treize principes, limites de l'analogie, grille de synthèse.">
+<meta name="description" content="Réflexion sur le domaine noir de Liu Cixin et sur la transposition de ses principes à la cyberdéfense : treize principes, limites de l&#x27;analogie, grille de synthèse.">
 <title>Le domaine noir et la cyberdéfense</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -99,9 +99,18 @@ th, td { text-align: left; vertical-align: top; padding: .65rem .8rem; border-bo
 th { font-family: var(--mono); font-weight: 500; font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
 tbody tr:last-child td { border-bottom: 0; }
 td:first-child { font-weight: 600; }
-article h2[id^="6"] ~ * { font-size: .95rem; }
+article.essay h2[id^="6"] ~ * { font-size: .95rem; }
 article blockquote { margin: 0 0 1.2rem; padding-left: 1rem; border-left: 3px solid var(--line); color: var(--muted); }
 
+figure.diagram { line-height: normal; font-size: 16px; font-family: "IBM Plex Mono", Menlo, Consolas, monospace; margin: 1.6rem 0 2rem; padding: 1rem .75rem; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; overflow-x: auto; width: min(55rem, calc(100vw - 2rem)); max-width: none; }
+figure.diagram svg { display: block; margin: 0 auto; height: auto; }
+figure.diagram foreignObject div, figure.diagram foreignObject span { color: var(--fg); }
+article .table-wrap { width: min(55rem, calc(100vw - 2rem)); }
+@media (max-width: 60rem) { article .table-wrap { width: auto; } figure.diagram { width: auto; } figure.diagram svg { min-width: 34rem; } }
+article code { font-family: var(--mono); font-size: .86em; }
+article pre:not(.mermaid) { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: .8rem 1rem; overflow-x: auto; font-size: .82rem; line-height: 1.5; margin: 1.2rem 0 1.6rem; }
+article pre:not(.mermaid) code { font-size: 1em; }
+.crosslink { font-family: var(--mono); font-size: .8rem; margin: 1.2rem 0 0; }
 footer.colophon { max-width: 76rem; margin: 3rem auto 0; padding-top: 1.5rem; border-top: 1px solid var(--line); font-family: var(--mono); font-size: .76rem; color: var(--muted); line-height: 1.6; }
 footer.colophon p { margin: .2rem 0; }
 
@@ -119,15 +128,15 @@ footer.colophon p { margin: .2rem 0; }
   <h1>Le domaine noir et la cyberdéfense</h1>
   <p class="subtitle">Réflexion sur un concept de Liu Cixin et sur ce qu’un défenseur peut en retenir, et en refuser</p>
   <div class="lede"><p>« Ce sujet », c’est le domaine noir (黑域, <em>black domain</em>) de Liu Cixin : dans <em>La Mort immortelle</em>, une civilisation abaisse la vitesse de la lumière autour de son étoile au-dessous de la vitesse de libération ; plus rien n’en sort, et tout l’univers peut lire dans cette prison volontaire la preuve qu’elle ne nuira jamais à personne. Cet essai prend l’image au sérieux, non comme un modèle à construire mais comme une question à poser à chaque système d’information : qu’est-ce qui peut en sortir, et qui peut le prouver ? Il soutient que la trilogie éclaire la cyberdéfense par une inversion (on protège en contrôlant la sortie plus que l’entrée ; on rassure par l’incapacité vérifiable plutôt que par la promesse), qu’elle décrit avec précision les modes d’échec de la dissuasion, de la surveillance et de la concentration, et qu’elle se trompe sur un point décisif : le cyberespace possède ce que l’univers de Liu Cixin n’a pas, des institutions, des preuves partagées et un jeu répété. Lire la forêt sombre jusqu’au bout, c’est aussi apprendre à refuser le domaine noir comme conseil de désespoir.</p></div>
-  
-<ul class="specs" aria-label="Repères">
+  <ul class="specs" aria-label="Repères">
   <li><span class="k">Vitesse de libération citée par le roman</span><span class="v">16,7 km/s</span></li>
   <li><span class="k">Ce qui entre</span><span class="v">la matière</span></li>
   <li><span class="k">Ce qui sort</span><span class="v">rien</span></li>
   <li><span class="k">Principes</span><span class="v">13</span></li>
   <li><span class="k">Postures</span><span class="v">4</span></li>
   <li><span class="k">Longueur</span><span class="v">≈ 17 700 mots</span></li>
-</ul>
+  </ul>
+  <p class="crosslink"><a href="architecture.html">Suite : une architecture d'applications pour mettre ces principes en œuvre →</a></p>
 </header>
 <div class="page">
   <nav class="toc" aria-label="Sommaire">
@@ -173,7 +182,7 @@ footer.colophon p { margin: .2rem 0; }
 </ol>
     </details>
   </nav>
-  <article>
+  <article class="essay">
 <h2 id="1-pourquoi-lire-une-fiction-avec-des-yeux-de-défenseur"><span class="num">1</span> Pourquoi lire une fiction avec des yeux de défenseur</h2>
 <p>Un roman est une expérience de pensée affranchie du budget et de la vraisemblance : il pousse une hypothèse jusqu’à son terme et montre ce qu’elle coûte. Les doctrines de défense se construisent sur des scénarios ; la trilogie du <em>Problème à trois corps</em> en fournit d’extrêmes, et chacun est le cas limite d’une situation familière à quiconque a passé une nuit dans un centre opérationnel de sécurité : un adversaire qui lit tout ce qui s’exprime sauf la pensée ; un préavis de quatre siècles gaspillé en certitudes ; une dissuasion suspendue au pouls d’une seule personne ; une défense dimensionnée contre la dernière arme observée et balayée par une arme d’une autre classe ; une société qui préfère la sécurité apparente et l’égalité à la survie, puis exécute celui qui avait raison.</p>
 <p>Ce qu’on y gagne, c’est un vocabulaire et des mécanismes isolés. La « chaîne de suspicion » nomme le problème de la vérification des intentions ; l’« explosion technologique », l’erreur de calibrer sa défense sur l’état présent de l’adversaire ; le « Porte-épée », le point de défaillance humain unique ; le « domaine noir », le contrôle de ce qui sort. Dans une réunion budgétaire, ces mécanismes se noient dans les détails ; dans un récit où les conséquences sont jouées jusqu’au bout, ils apparaissent nus.</p>

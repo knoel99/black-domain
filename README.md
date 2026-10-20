@@ -38,6 +38,17 @@ A single **control plane** (`bdos/controlplane/`) wires every layer onto one
 hash-chained, tamper-evident event log and exposes one decision point,
 `authorize(principal, action_class, resource, notice)`.
 
+Two organisation-level pieces sit on top of the layers:
+
+- **Quorum** (`bdos/quorum/`): with `quorum.seal_requires_quorum`, sealing an
+  enclave needs `m` distinct Ed25519-signed approvals and a deliberate delay
+  after quorum is reached; the Sentinel then quarantines on its own but only
+  recommends the seal. *The key must not be a person.*
+- **Control registry** (`bdos/registry/`): every control states its scar, the
+  weapon it assumes, who can lift it and how a third party checks it;
+  `bdosctl registry check` refuses a "law" a compromised admin can lift, an
+  irreversible control in one hand, an expired exception.
+
 ## Quickstart
 
 ```bash
@@ -49,6 +60,9 @@ python -m bdos simulate
 # Mint and verify a signed safety notice:
 python -m bdos keygen --out issuer.key
 python -m bdos mint --key issuer.key --principal ops-1 --class admin --resource "db://prod"
+
+# Check the sample control registry (two defects are planted on purpose):
+python -m bdos.controlplane.cli registry check os/etc/bdos/controls.toml
 
 # Run the tests:
 python -m pytest -q
@@ -92,9 +106,11 @@ bdos/safetynotice/  Ed25519 capability tokens (issuer + verifier)
 bdos/darkforest/    moving target + deception
 bdos/blackdomain/   one-way enclaves + nftables compiler
 bdos/sentinel/      machine-speed anomaly scoring + containment
+bdos/quorum/        m-of-n signed approvals + deliberate delay in front of irreversible actions
+bdos/registry/      control registry (TOML) and its checker
 bdos/controlplane/  the plane, the socket server, and the bdosctl/bdosd CLIs
 os/                 the installable OS overlay (systemd, sysctl, seccomp, installer, sample policy)
-docs/               ARCHITECTURE.md, THREAT_MODEL.md, CONTRACT.md, and the French essay (see below)
+docs/               ARCHITECTURE.md, THREAT_MODEL.md, CONTRACT.md, the French essay and its application architecture (see below)
 tests/              pytest suite
 ```
 
@@ -126,6 +142,11 @@ construire mais comme une question à poser à chaque système d'information :
   l'essai complet.
 - [`docs/index.html`](docs/index.html) : la même page en version web autonome
   (utilisable telle quelle avec GitHub Pages, branche `master`, dossier `/docs`).
+- [`docs/architecture-applicative.md`](docs/architecture-applicative.md) et sa
+  version web [`docs/architecture.html`](docs/architecture.html) : la suite de
+  l'essai, une architecture d'applications pour mettre les principes en œuvre
+  (cinq plans, onze applications, huit règles, quatre flux, feuille de route),
+  avec un premier squelette de code dans `bdos/quorum/` et `bdos/registry/`.
 
 ### Plan de l'essai
 

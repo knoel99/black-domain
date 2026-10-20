@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Architecture d&#x27;applications pour mettre en œuvre les treize principes du domaine noir : cinq plans, onze applications, huit règles, quatre flux, feuille de route et squelette de code BDOS.">
+<title>Architecture du domaine noir</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Plan : page de lecture à deux colonnes (sommaire collant à gauche, colonne de texte à mesure fixe),
+   sobre et éditoriale ; une seule note de couleur, le bleu Tcherenkov de la lumière ralentie ;
+   l'ambre n'apparaît que sur les chiffres du bandeau. */
+:root {
+  --bg: #f1f3f6;
+  --surface: #ffffff;
+  --fg: #151a21;
+  --muted: #5a6473;
+  --line: #d3d9e1;
+  --accent: #15697a;
+  --accent-soft: #e0eff2;
+  --amber: #8d6410;
+  --display: "Fraunces", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --body: "Source Serif 4", "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1419; --surface: #161c24; --fg: #dde3ea; --muted: #97a3b0; --line: #283340;
+    --accent: #5fc4d5; --accent-soft: #10303a; --amber: #d8aa4f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1419; --surface: #161c24; --fg: #dde3ea; --muted: #97a3b0; --line: #283340;
+  --accent: #5fc4d5; --accent-soft: #10303a; --amber: #d8aa4f; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font-family: var(--body); font-size: 1.0625rem; line-height: 1.62;
+  font-optical-sizing: auto; text-rendering: optimizeLegibility;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 4rem;
+}
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+/* bandeau */
+.masthead { max-width: 76rem; margin: 0 auto; padding-block: 2.5rem 2rem; border-bottom: 1px solid var(--line); }
+.eyebrow { font-family: var(--mono); font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 1.2rem; }
+.masthead h1 { font-family: var(--display); font-weight: 600; font-size: clamp(2.1rem, 4.6vw, 3.5rem); line-height: 1.08; letter-spacing: -.01em; margin: 0 0 .7rem; max-width: 22ch; text-wrap: balance; }
+.subtitle { font-family: var(--display); font-style: italic; font-weight: 400; font-size: clamp(1.15rem, 2vw, 1.45rem); line-height: 1.35; color: var(--muted); margin: 0 0 1.8rem; max-width: 38ch; text-wrap: balance; }
+.lede { max-width: 68ch; border-left: 3px solid var(--accent); padding: .2rem 0 .2rem 1.1rem; margin: 0 0 1.8rem; font-size: 1.08rem; }
+.lede p { margin: 0; }
+.specs { display: flex; flex-wrap: wrap; gap: .8rem 2.2rem; margin: 0; padding: 0; list-style: none; }
+.specs li { display: flex; flex-direction: column; gap: .15rem; }
+.specs .k { font-family: var(--mono); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.specs .v { font-family: var(--mono); font-size: .95rem; font-variant-numeric: tabular-nums; color: var(--amber); }
+
+/* grille */
+.page { max-width: 76rem; margin: 0 auto; display: grid; grid-template-columns: 17rem minmax(0, 1fr); gap: 3.5rem; align-items: start; padding-top: 2rem; }
+.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 1.25rem); max-height: calc(100vh - 2.5rem); overflow: auto; padding-right: .5rem; scrollbar-width: thin; }
+.toc summary { font-family: var(--mono); font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); cursor: pointer; list-style: none; padding: .4rem 0; }
+.toc summary::-webkit-details-marker { display: none; }
+.toc summary::after { content: " ▸"; }
+.toc details[open] summary::after { content: " ▾"; }
+.toc ol { list-style: none; margin: 0; padding: 0; }
+.toc-l1 > li { margin: .55rem 0; }
+.toc-l2 { margin-top: .25rem !important; padding-left: .25rem !important; border-left: 1px solid var(--line); }
+.toc-l2 > li { margin: .12rem 0; }
+.toc a { display: grid; grid-template-columns: 2.6rem minmax(0, 1fr); gap: .3rem; align-items: baseline; color: var(--fg); text-decoration: none; font-size: .86rem; line-height: 1.35; padding: .18rem .4rem; border-radius: 3px; }
+.toc-l1 > li > a { font-weight: 600; }
+.toc-l2 a { color: var(--muted); }
+.toc a .num { font-family: var(--mono); font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.toc a:hover { background: var(--accent-soft); }
+.toc a.active { color: var(--accent); background: var(--accent-soft); }
+.toc a.active .num { color: var(--accent); }
+
+/* article */
+article { max-width: 68ch; min-width: 0; }
+article h2, article h3 { font-family: var(--display); font-weight: 600; line-height: 1.2; text-wrap: balance; scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 1.25rem); }
+article h2 { font-size: clamp(1.6rem, 3vw, 2.1rem); margin: 3.2rem 0 1.2rem; letter-spacing: -.01em; }
+article h3 { font-size: clamp(1.22rem, 2.2vw, 1.45rem); margin: 2.6rem 0 1rem; }
+article h2 .num, article h3 .num { font-family: var(--mono); font-weight: 500; font-size: .78em; color: var(--accent); margin-right: .25rem; }
+article p { margin: 0 0 1.1rem; }
+article ul, article ol { padding-left: 1.3rem; margin: 0 0 1.2rem; }
+article li { margin: .45rem 0; }
+article li::marker { color: var(--accent); }
+article hr { border: 0; height: 1px; background: var(--line); margin: 3rem auto; width: 6rem; }
+article strong { font-weight: 650; }
+.volet > strong:first-child { display: inline-block; font-family: var(--mono); font-weight: 500; font-size: .74rem; letter-spacing: .07em; text-transform: uppercase; color: var(--accent); margin-right: .45rem; transform: translateY(-.08em); }
+.question { background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: 0 4px 4px 0; padding: .75rem 1rem; margin: 1.4rem 0 2rem; }
+.question em { font-style: italic; }
+.table-wrap { overflow-x: auto; margin: 1.4rem 0 1.8rem; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 48rem; font-size: .9rem; line-height: 1.45; }
+th, td { text-align: left; vertical-align: top; padding: .65rem .8rem; border-bottom: 1px solid var(--line); }
+th { font-family: var(--mono); font-weight: 500; font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+tbody tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 600; }
+article.essay h2[id^="6"] ~ * { font-size: .95rem; }
+article blockquote { margin: 0 0 1.2rem; padding-left: 1rem; border-left: 3px solid var(--line); color: var(--muted); }
+
+figure.diagram { line-height: normal; font-size: 16px; font-family: "IBM Plex Mono", Menlo, Consolas, monospace; margin: 1.6rem 0 2rem; padding: 1rem .75rem; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; overflow-x: auto; width: min(55rem, calc(100vw - 2rem)); max-width: none; }
+figure.diagram svg { display: block; margin: 0 auto; height: auto; }
+figure.diagram foreignObject div, figure.diagram foreignObject span { color: var(--fg); }
+article .table-wrap { width: min(55rem, calc(100vw - 2rem)); }
+@media (max-width: 60rem) { article .table-wrap { width: auto; } figure.diagram { width: auto; } figure.diagram svg { min-width: 34rem; } }
+article code { font-family: var(--mono); font-size: .86em; }
+article pre:not(.mermaid) { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: .8rem 1rem; overflow-x: auto; font-size: .82rem; line-height: 1.5; margin: 1.2rem 0 1.6rem; }
+article pre:not(.mermaid) code { font-size: 1em; }
+.crosslink { font-family: var(--mono); font-size: .8rem; margin: 1.2rem 0 0; }
+footer.colophon { max-width: 76rem; margin: 3rem auto 0; padding-top: 1.5rem; border-top: 1px solid var(--line); font-family: var(--mono); font-size: .76rem; color: var(--muted); line-height: 1.6; }
+footer.colophon p { margin: .2rem 0; }
+
+@media (max-width: 60rem) {
+  .page { grid-template-columns: 1fr; gap: 1.5rem; padding-top: 1.25rem; }
+  .toc { position: static; max-height: none; overflow: visible; padding-right: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); padding: .35rem .8rem; }
+  .masthead h1 { font-size: clamp(1.9rem, 8vw, 2.6rem); }
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <p class="eyebrow">Architecture · Cyberdéfense · suite de l'essai</p>
+  <h1>Une architecture d’applications pour le domaine noir</h1>
+  <p class="subtitle">Comment mettre en œuvre les treize principes à l’échelle d’une organisation</p>
+  <div class="lede"><p>L’essai <a href="index.html">« Le domaine noir et la cyberdéfense »</a> dégage treize principes, une grille de lecture et un ordre de mise en œuvre. Ce document en tire une architecture : onze applications réparties sur cinq plans, huit règles qui les tiennent ensemble, quatre flux qui les font travailler, une feuille de route et un premier squelette de code dans BDOS. Il ne décrit pas un produit à acheter ; il dit quelles fonctions doivent exister, où elles doivent vivre, qui peut les lever et ce qui prouve qu’elles tiennent.</p></div>
+  <ul class="specs" aria-label="Repères">
+  <li><span class="k">Plans</span><span class="v">5</span></li>
+  <li><span class="k">Applications</span><span class="v">11</span></li>
+  <li><span class="k">Règles</span><span class="v">8</span></li>
+  <li><span class="k">Flux</span><span class="v">4</span></li>
+  <li><span class="k">Principes couverts</span><span class="v">13 / 13</span></li>
+  <li><span class="k">Longueur</span><span class="v">≈ 7 600 mots</span></li>
+  </ul>
+  <p class="crosslink"><a href="index.html">← L'essai : « Le domaine noir et la cyberdéfense »</a></p>
+</header>
+<div class="page">
+  <nav class="toc" aria-label="Sommaire">
+    <details open>
+      <summary>Sommaire</summary>
+      <ol class="toc-l1">
+<li><a href="#1-objet-et-périmètre"><span class="num">1</span><span class="lbl">Objet et périmètre</span></a>
+<ol class="toc-l2">
+<li><a href="#11-de-lessai-à-larchitecture"><span class="num">1.1</span><span class="lbl">De l’essai à l’architecture</span></a></li>
+<li><a href="#12-place-de-bdos"><span class="num">1.2</span><span class="lbl">Place de BDOS</span></a></li>
+<li><a href="#13-ce-que-ce-document-nest-pas"><span class="num">1.3</span><span class="lbl">Ce que ce document n’est pas</span></a></li>
+</ol></li>
+<li><a href="#2-huit-règles-darchitecture"><span class="num">2</span><span class="lbl">Huit règles d’architecture</span></a>
+</li>
+<li><a href="#3-vue-densemble--cinq-plans"><span class="num">3</span><span class="lbl">Vue d’ensemble</span></a>
+</li>
+<li><a href="#4-les-onze-applications"><span class="num">4</span><span class="lbl">Les onze applications</span></a>
+<ol class="toc-l2">
+<li><a href="#41-passerelle-de-sortie-et-dns-protecteur"><span class="num">4.1</span><span class="lbl">Passerelle de sortie et DNS protecteur</span></a></li>
+<li><a href="#42-registre-des-contrôles--la-loi-"><span class="num">4.2</span><span class="lbl">Registre des contrôles (« la Loi »)</span></a></li>
+<li><a href="#43-coffre-de-preuve"><span class="num">4.3</span><span class="lbl">Coffre de preuve</span></a></li>
+<li><a href="#44-arche"><span class="num">4.4</span><span class="lbl">Arche</span></a></li>
+<li><a href="#45-ancre-didentité"><span class="num">4.5</span><span class="lbl">Ancre d’identité</span></a></li>
+<li><a href="#46-salle-du-porte-épée"><span class="num">4.6</span><span class="lbl">Salle du Porte-épée</span></a></li>
+<li><a href="#47-forêt-de-leurres"><span class="num">4.7</span><span class="lbl">Forêt de leurres</span></a></li>
+<li><a href="#48-miroir-de-ladversaire"><span class="num">4.8</span><span class="lbl">Miroir de l’adversaire</span></a></li>
+<li><a href="#49-chaîne-de-fabrication-attestée"><span class="num">4.9</span><span class="lbl">Chaîne de fabrication attestée</span></a></li>
+<li><a href="#410-veille-active"><span class="num">4.10</span><span class="lbl">Veille active</span></a></li>
+<li><a href="#411-relais-de-coopération"><span class="num">4.11</span><span class="lbl">Relais de coopération</span></a></li>
+<li><a href="#412-le-tableau-de-bord-transverse"><span class="num">4.12</span><span class="lbl">Le tableau de bord transverse</span></a></li>
+</ol></li>
+<li><a href="#5-quatre-flux"><span class="num">5</span><span class="lbl">Quatre flux</span></a>
+<ol class="toc-l2">
+<li><a href="#51-un-leurre-est-touché"><span class="num">5.1</span><span class="lbl">Un leurre est touché</span></a></li>
+<li><a href="#52-une-exposition-apparaît"><span class="num">5.2</span><span class="lbl">Une exposition apparaît</span></a></li>
+<li><a href="#53-lancre-didentité-tombe"><span class="num">5.3</span><span class="lbl">L’ancre d’identité tombe</span></a></li>
+<li><a href="#54-un-incident-est-qualifié"><span class="num">5.4</span><span class="lbl">Un incident est qualifié</span></a></li>
+</ol></li>
+<li><a href="#6-le-modèle-de-menace-de-larchitecture"><span class="num">6</span><span class="lbl">Le modèle de menace de l’architecture</span></a>
+</li>
+<li><a href="#7-correspondance-entre-principes-et-applications"><span class="num">7</span><span class="lbl">Correspondance entre principes et applications</span></a>
+</li>
+<li><a href="#8-feuille-de-route"><span class="num">8</span><span class="lbl">Feuille de route</span></a>
+</li>
+<li><a href="#9-le-squelette-de-code"><span class="num">9</span><span class="lbl">Le squelette de code</span></a>
+<ol class="toc-l2">
+<li><a href="#91-le-registre-des-contrôles--bdosregistry"><span class="num">9.1</span><span class="lbl">Le Registre des contrôles</span></a></li>
+<li><a href="#92-le-quorum-de-la-salle--bdosquorum"><span class="num">9.2</span><span class="lbl">Le quorum de la Salle</span></a></li>
+<li><a href="#93-ce-que-le-squelette-ne-fait-pas-encore"><span class="num">9.3</span><span class="lbl">Ce que le squelette ne fait pas encore</span></a></li>
+</ol></li>
+<li><a href="#10-limites-et-refus"><span class="num">10</span><span class="lbl">Limites et refus</span></a>
+</li>
+</ol>
+    </details>
+  </nav>
+  <article class="arch">
+<h2 id="1-objet-et-périmètre"><span class="num">1</span> Objet et périmètre</h2>
+<h3 id="11-de-lessai-à-larchitecture"><span class="num">1.1</span> De l’essai à l’architecture</h3>
+<p>L’essai répond à la question « que faut-il retenir du domaine noir ? ». Ce document répond à la suivante : « quelles applications faut-il faire tourner, et où, pour que ces principes ne restent pas des intentions ? ». Un principe qui n’a ni application pour le porter, ni propriétaire pour en répondre, ni indicateur pour dire qu’il fonctionne finit dans une politique de sécurité que personne ne relit.</p>
+<p>Le passage de l’un à l’autre suit trois règles de méthode.</p>
+<ul>
+<li><strong>Une application par fonction, pas par principe.</strong> Les principes se recoupent : la sortie interdite par défaut sert 3.1 (ce qui sort), 3.3 (les émissions involontaires) et 3.7 (couper en un seul geste). Une architecture qui créerait une application par principe dupliquerait les mêmes points d’application. On part donc des fonctions et l’on vérifie ensuite, par une matrice (section 7), que chaque principe est porté.</li>
+<li><strong>Assembler avant de construire.</strong> Presque toutes les fonctions existent sous forme de produits, de logiciels libres ou de services managés : mandataires, résolveurs filtrants, stockages inaltérables, fournisseurs d’identité, outils de leurre, plateformes de partage. Ce qui manque presque toujours, c’est la colle : le modèle de données qui relie un contrôle à sa raison d’être, la logique qui sépare le réversible de l’irréversible, les indicateurs. C’est là que porte le code spécifique, et c’est là que porte le squelette livré avec ce document.</li>
+<li><strong>L’architecture est elle-même dans la forêt.</strong> Les outils de sécurité sont des cibles de choix : ils voient tout, administrent tout et sortent souvent vers leurs éditeurs. Chaque application décrite ici a donc sa propre zone de confiance, son propre « qui peut la lever » et son propre mode d’échec, et la section 6 traite le modèle de menace de l’ensemble.</li>
+</ul>
+<h3 id="12-place-de-bdos"><span class="num">1.2</span> Place de BDOS</h3>
+<p>BDOS, dans ce dépôt, est un agent d’hôte : il s’installe sur un serveur Linux, filtre la sortie des enclaves, ralentit les cadences machine, exige des jetons signés pour les actions privilégiées, pose des leurres et contient à vitesse machine. Dans l’architecture qui suit, il est le <strong>point d’application local</strong> de plusieurs applications : il applique la politique de la Passerelle de sortie au plus près de la charge, alimente le Coffre de preuve avec son journal chaîné, vérifie les capacités émises par l’Ancre d’identité, pose les leurres de la Forêt et exécute les isolements décidés par la Salle du Porte-épée. Les limites que son README documente (clé de signature unique, état de rejeu propre à chaque processus, scellement irréversible déclenché par une seule commande) sont précisément celles que l’architecture traite à l’étage supérieur ; la section 9 montre comment le squelette commence à le faire.</p>
+<h3 id="13-ce-que-ce-document-nest-pas"><span class="num">1.3</span> Ce que ce document n’est pas</h3>
+<p>Ce n’est ni un cahier des charges, ni une liste de produits, ni une architecture de référence pour un secteur réglementé particulier. Les briques citées sont des exemples éprouvés, pas des recommandations d’achat. Les dimensions (nombre d’approbateurs, délais, durées de rétention) sont des points de départ à ajuster à l’hypothèse de menace que chaque organisation aura écrite, ce qui est d’ailleurs la première exigence du principe 3.9.</p>
+<hr />
+<h2 id="2-huit-règles-darchitecture"><span class="num">2</span> Huit règles d’architecture</h2>
+<p>Les applications changent, se remplacent et se rachètent. Les règles qui suivent doivent rester vraies quelle que soit la brique retenue : ce sont les « constantes » de l’architecture, au sens où le domaine noir abaisse une constante plutôt que d’édicter une règle.</p>
+<p><strong>R1. La preuve, la récupération et la décision ne partagent ni l’ancre d’identité ni le plan d’administration de la production.</strong> Le Coffre de preuve, l’Arche et la Salle du Porte-épée vivent dans des comptes, des locataires ou des domaines d’administration distincts, avec leurs propres identités, leurs propres facteurs d’authentification et, si possible, un fournisseur différent. Les flux de la production vers ces plans sont en écriture seule : la production peut déposer, jamais relire, modifier ni effacer. C’est la traduction directe des principes 3.2 (une preuve qu’un administrateur compromis ne peut pas défaire), 3.7 (coordonner hors de portée de l’instrument suspect) et 3.11 (une copie qui ne partage rien avec ce qu’elle sauvegarde).</p>
+<p><strong>R2. Chaque contrôle déclare qui peut le lever.</strong> Un contrôle qu’un administrateur de production compromis peut lever est une règle ; un contrôle qu’il ne peut pas lever, et dont un tiers peut constater qu’il tient, est une loi. La distinction n’est pas honorifique : elle est enregistrée dans le Registre des contrôles et vérifiée par lui. La plupart des contrôles sont, et doivent rester, des règles ; l’essentiel est de ne pas se raconter qu’une règle est une loi (3.2).</p>
+<p><strong>R3. Le réversible s’automatise, l’irréversible se fractionne.</strong> Isoler un hôte, révoquer une session, couper un flux sortant, mettre un compte en quarantaine : ces gestes se défont, ils doivent donc pouvoir partir à vitesse machine, sans attendre la preuve, sous une autorité pré-déléguée par écrit. Sceller une enclave, détruire des données, restaurer en écrasant, révoquer une autorité de certification : ces gestes ne se défont pas, ils exigent plusieurs personnes et un délai délibéré. C’est la leçon du Porte-épée (3.8) : la volonté d’agir est une propriété du système, pas du caractère de celui qui tient l’épée.</p>
+<p><strong>R4. Le silence d’un capteur est un signal.</strong> Toute source de télémétrie émet un battement de cœur ; son absence est une alerte de même rang qu’une détection. Les capteurs sont hétérogènes (réseau, hôte, identité, application) et leurs données quittent l’hôte observé dès qu’elles sont produites. Sous les intellectrons (3.7), on suspecte l’instrument avant de conclure que la physique est calme.</p>
+<p><strong>R5. L’outillage de sécurité sort aussi par la passerelle.</strong> Les agents de détection, les collecteurs et les consoles de sécurité parlent à leurs éditeurs ; ces flux sont des émissions comme les autres (3.3), et un outil de sécurité compromis est un canal de sortie idéal. Ils passent par la Passerelle de sortie, avec des destinations déclarées et journalisées, sans exception de principe.</p>
+<p><strong>R6. L’irréversible est réservé aux joyaux.</strong> Les enclaves scellées, les diodes et les stockages en mode conformité protègent ce qui ne doit jamais sortir ni être effacé. Tout le reste reste réversible, mis à jour, corrigé et surveillé. Un système qui ne reçoit plus ni correctifs ni renseignement n’est pas sûr, il est figé : c’est le tombeau bien éclairé de l’essai (5.2, posture « s’enfermer »).</p>
+<p><strong>R7. L’outillage de sécurité est la nouvelle ancre.</strong> La chaîne de suspicion se déplace sans s’abolir (3.12) : en concentrant les preuves, les clés et les décisions dans quelques applications, l’architecture crée de nouvelles cibles. Chacune a donc son modèle de menace écrit, son propre quorum pour les opérations qui la désarment, et un indicateur vérifiable par un tiers.</p>
+<p><strong>R8. On ne masse pas la flotte.</strong> Pas de fournisseur unique pour la production et sa sauvegarde, pour la détection et sa supervision, pour la messagerie courante et le canal de crise. Un canal hors bande (téléphonie, messagerie indépendante, annuaire papier des astreintes) existe et s’exerce. Une architecture homogène se défend bien contre l’attaque qu’elle attend et tombe d’un bloc devant celle qu’elle n’attend pas (3.9, 3.11).</p>
+<hr />
+<h2 id="3-vue-densemble--cinq-plans"><span class="num">3</span> Vue d’ensemble : cinq plans</h2>
+<p>Les onze applications se répartissent sur cinq plans. La séparation n’est pas seulement logique : chaque plan a son propre domaine d’administration et ses propres identités (R1), et les flux entre plans sont orientés.</p>
+<figure class="diagram" role="img"><svg aria-roledescription="flowchart-v2" role="graphics-document document" viewBox="-10 -8 767.5654296875 482.6999816894531" style="max-width: 767.5654296875px;" xmlns="http://www.w3.org/2000/svg" width="100%" id="dn-diagram-0"><style>#dn-diagram-0{font-family:"IBM Plex Mono",Menlo,Consolas,monospace;font-size:13px;fill:var(--fg);}#dn-diagram-0 .error-icon{fill:var(--bg);}#dn-diagram-0 .error-text{fill:var(--fg);stroke:var(--fg);}#dn-diagram-0 .edge-thickness-normal{stroke-width:2px;}#dn-diagram-0 .edge-thickness-thick{stroke-width:3.5px;}#dn-diagram-0 .edge-pattern-solid{stroke-dasharray:0;}#dn-diagram-0 .edge-pattern-dashed{stroke-dasharray:3;}#dn-diagram-0 .edge-pattern-dotted{stroke-dasharray:2;}#dn-diagram-0 .marker{fill:var(--muted);stroke:var(--muted);}#dn-diagram-0 .marker.cross{stroke:var(--muted);}#dn-diagram-0 svg{font-family:"IBM Plex Mono",Menlo,Consolas,monospace;font-size:13px;}#dn-diagram-0 .label{font-family:"IBM Plex Mono",Menlo,Consolas,monospace;color:var(--fg);}#dn-diagram-0 .cluster-label text{fill:var(--fg);}#dn-diagram-0 .cluster-label span,#dn-diagram-0 p{color:var(--fg);}#dn-diagram-0 .label text,#dn-diagram-0 span,#dn-diagram-0 p{fill:var(--fg);color:var(--fg);}#dn-diagram-0 .node rect,#dn-diagram-0 .node circle,#dn-diagram-0 .node ellipse,#dn-diagram-0 .node polygon,#dn-diagram-0 .node path{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1px;}#dn-diagram-0 .flowchart-label text{text-anchor:middle;}#dn-diagram-0 .node .katex path{fill:var(--muted);stroke:var(--muted);stroke-width:1px;}#dn-diagram-0 .node .label{text-align:center;}#dn-diagram-0 .node.clickable{cursor:pointer;}#dn-diagram-0 .arrowheadPath{fill:var(--muted);}#dn-diagram-0 .edgePath .path{stroke:var(--muted);stroke-width:2.0px;}#dn-diagram-0 .flowchart-link{stroke:var(--muted);fill:none;}#dn-diagram-0 .edgeLabel{background-color:var(--surface);text-align:center;}#dn-diagram-0 .edgeLabel rect{opacity:0.5;background-color:var(--surface);fill:var(--surface);}#dn-diagram-0 .labelBkg{background-color:var(--surface);}#dn-diagram-0 .cluster rect{fill:var(--bg);stroke:var(--line);stroke-width:1px;}#dn-diagram-0 .cluster text{fill:var(--fg);}#dn-diagram-0 .cluster span,#dn-diagram-0 p{color:var(--fg);}#dn-diagram-0 div.mermaidTooltip{position:absolute;text-align:center;max-width:200px;padding:2px;font-family:"IBM Plex Mono",Menlo,Consolas,monospace;font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:2px;pointer-events:none;z-index:100;}#dn-diagram-0 .flowchartTitleText{text-anchor:middle;font-size:18px;fill:var(--fg);}#dn-diagram-0 :root{--mermaid-font-family:"IBM Plex Mono",Menlo,Consolas,monospace;}</style><g><marker orient="auto" markerHeight="12" markerWidth="12" markerUnits="userSpaceOnUse" refY="5" refX="6" viewBox="0 0 10 10" class="marker flowchart" id="dn-diagram-0_flowchart-pointEnd"><path style="stroke-width: 1; stroke-dasharray: 1, 0;" class="arrowMarkerPath" d="M 0 0 L 10 5 L 0 10 z"></path></marker><marker orient="auto" markerHeight="12" markerWidth="12" markerUnits="userSpaceOnUse" refY="5" refX="4.5" viewBox="0 0 10 10" class="marker flowchart" id="dn-diagram-0_flowchart-pointStart"><path style="stroke-width: 1; stroke-dasharray: 1, 0;" class="arrowMarkerPath" d="M 0 5 L 10 10 L 10 0 z"></path></marker><marker orient="auto" markerHeight="11" markerWidth="11" markerUnits="userSpaceOnUse" refY="5" refX="11" viewBox="0 0 10 10" class="marker flowchart" id="dn-diagram-0_flowchart-circleEnd"><circle style="stroke-width: 1; stroke-dasharray: 1, 0;" class="arrowMarkerPath" r="5" cy="5" cx="5"></circle></marker><marker orient="auto" markerHeight="11" markerWidth="11" markerUnits="userSpaceOnUse" refY="5" refX="-1" viewBox="0 0 10 10" class="marker flowchart" id="dn-diagram-0_flowchart-circleStart"><circle style="stroke-width: 1; stroke-dasharray: 1, 0;" class="arrowMarkerPath" r="5" cy="5" cx="5"></circle></marker><marker orient="auto" markerHeight="11" markerWidth="11" markerUnits="userSpaceOnUse" refY="5.2" refX="12" viewBox="0 0 11 11" class="marker cross flowchart" id="dn-diagram-0_flowchart-crossEnd"><path style="stroke-width: 2; stroke-dasharray: 1, 0;" class="arrowMarkerPath" d="M 1,1 l 9,9 M 10,1 l -9,9"></path></marker><marker orient="auto" markerHeight="11" markerWidth="11" markerUnits="userSpaceOnUse" refY="5.2" refX="-1" viewBox="0 0 11 11" class="marker cross flowchart" id="dn-diagram-0_flowchart-crossStart"><path style="stroke-width: 2; stroke-dasharray: 1, 0;" class="arrowMarkerPath" d="M 1,1 l 9,9 M 10,1 l -9,9"></path></marker><g class="root"><g class="clusters"></g><g class="edgePaths"><path marker-end="url(#dn-diagram-0_flowchart-pointEnd)" style="fill:none;" class="edge-thickness-normal edge-pattern-solid flowchart-link LS-PROD LE-PREUVE" id="L-PROD-PREUVE-0" d="M237.191,58.6L208.43,65.958C179.669,73.317,122.147,88.033,100.512,102.143C78.878,116.252,93.13,129.753,100.257,136.504L107.383,143.255"></path><path marker-end="url(#dn-diagram-0_flowchart-pointEnd)" style="fill:none;" class="edge-thickness-normal edge-pattern-solid flowchart-link LS-PREUVE LE-PROD" id="L-PREUVE-PROD-0" d="M225.754,146.9L246.747,139.542C267.741,132.183,309.727,117.467,330.721,103.633C351.714,89.8,351.714,76.85,351.714,70.375L351.714,63.9"></path><path marker-end="url(#dn-diagram-0_flowchart-pointEnd)" style="fill:none;" class="edge-thickness-normal edge-pattern-solid flowchart-link LS-PREUVE LE-DEC" id="L-PREUVE-DEC-0" d="M142.16,205.5L142.16,212.858C142.16,220.217,142.16,234.933,173.361,250.647C204.561,266.361,266.963,283.072,298.163,291.428L329.364,299.784"></path><path marker-end="url(#dn-diagram-0_flowchart-pointEnd)" style="fill:none;" class="edge-thickness-normal edge-pattern-solid flowchart-link LS-OBS LE-DEC" id="L-OBS-DEC-0" d="M416.429,205.5L416.429,212.858C416.429,220.217,416.429,234.933,416.429,248.767C416.429,262.6,416.429,275.55,416.429,282.025L416.429,288.5"></path><path marker-end="url(#dn-diagram-0_flowchart-pointEnd)" style="fill:none;" class="edge-thickness-normal edge-pattern-solid flowchart-link LS-DEC LE-PROD" id="L-DEC-PROD-0" d="M498.375,297.519L523.931,289.54C549.488,281.562,600.601,265.606,626.157,245.386C651.714,225.167,651.714,200.683,651.714,176.2C651.714,151.717,651.714,127.233,622.517,107.843C593.321,88.453,534.928,74.157,505.732,67.009L476.535,59.86"></path><path marker-end="url(#dn-diagram-0_flowchart-pointEnd)" style="fill:none;" class="edge-thickness-normal edge-pattern-solid flowchart-link LS-DEC LE-COOP" id="L-DEC-COOP-0" d="M416.429,352.4L416.429,358.233C416.429,364.067,416.429,375.733,428.652,387.039C440.874,398.345,465.318,409.289,477.541,414.762L489.763,420.234"></path><path marker-end="url(#dn-diagram-0_flowchart-pointEnd)" marker-start="url(#dn-diagram-0_flowchart-pointStart)" style="fill:none;stroke-width:2px;stroke-dasharray:3;" class="edge-thickness-normal edge-pattern-dotted flowchart-link LS-OBS LE-COOP" id="L-OBS-COOP-0" d="M523.358,206.965L548.084,214.08C572.81,221.194,622.262,235.422,646.988,254.778C671.714,274.133,671.714,298.617,671.714,321.575C671.714,344.533,671.714,365.967,659.492,382.156C647.269,398.345,622.825,409.289,610.602,414.762L598.38,420.234"></path></g><g class="edgeLabels"><g transform="translate(64.625, 102.74999809265137)" class="edgeLabel"><g transform="translate(-64.625, -16.649999618530273)" class="label"><rect height="33.29999923706055" width="129.25" ry="0" rx="0"></rect><g><rect height="33.29999923706055" width="129.25" y="-2" x="-2" class="background"></rect><text y="-10.1"><tspan dy="1.1em" y="-0.1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">journaux,</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> copies</tspan></tspan><tspan dy="1.1em" y="1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">(écriture</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> seule)</tspan></tspan></text></g></g></g><g transform="translate(351.71435546875, 102.74999809265137)" class="edgeLabel"><g transform="translate(-70.4453125, -7.5)" class="label"><rect height="15.475285530090332" width="140.80897521972656" ry="0" rx="0"></rect><text style=""><tspan class="row" x="0" dy="1em" xml:space="preserve">politiques signées</tspan></text></g></g><g transform="translate(142.16015625, 249.649995803833)" class="edgeLabel"><g transform="translate(-90.0078125, -7.5)" class="label"><rect height="15.475285530090332" width="179.91632080078125" ry="0" rx="0"></rect><text style=""><tspan class="row" x="0" dy="1em" xml:space="preserve">alertes, capteurs muets</tspan></text></g></g><g transform="translate(416.42919921875, 249.649995803833)" class="edgeLabel"><g transform="translate(-84.1875, -16.649999618530273)" class="label"><rect height="33.29999923706055" width="168.375" ry="0" rx="0"></rect><g><rect height="33.29999923706055" width="168.375" y="-2" x="-2" class="background"></rect><text y="-10.1"><tspan dy="1.1em" y="-0.1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">touches,</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> expositions,</tspan></tspan><tspan dy="1.1em" y="1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">hypothèses</tspan></tspan></text></g></g></g><g transform="translate(651.7138671875, 176.1999969482422)" class="edgeLabel"><g transform="translate(-99.8515625, -16.649999618530273)" class="label"><rect height="33.29999923706055" width="199.703125" ry="0" rx="0"></rect><g><rect height="33.29999923706055" width="199.703125" y="-2" x="-2" class="background"></rect><text y="-10.1"><tspan dy="1.1em" y="-0.1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">couper,</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> révoquer,</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> isoler,</tspan></tspan><tspan dy="1.1em" y="1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">sceller</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> à</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> quorum</tspan></tspan></text></g></g></g><g transform="translate(416.42919921875, 387.3999938964844)" class="edgeLabel"><g transform="translate(-66.61328125, -7.5)" class="label"><rect height="15.475285530090332" width="132.99073791503906" ry="0" rx="0"></rect><text style=""><tspan class="row" x="0" dy="1em" xml:space="preserve">incident qualifié</tspan></text></g></g><g transform="translate(671.7138671875, 323.0999946594238)" class="edgeLabel"><g transform="translate(-50.875, -7.5)" class="label"><rect height="15.475285530090332" width="101.70164489746094" ry="0" rx="0"></rect><text style=""><tspan class="row" x="0" dy="1em" xml:space="preserve">renseignement</tspan></text></g></g></g><g class="nodes"><g transform="translate(351.71435546875, 29.299999237060547)" data-id="PROD" data-node="true" id="flowchart-PROD-0" class="node default default flowchart-label"><rect height="58.599998474121094" width="320.4541015625" y="-29.299999237060547" x="-160.22705078125" ry="0" rx="0" style="" class="basic label-container"></rect><g transform="translate(0, -21.799999237060547)" style="" class="label"><rect></rect><g><rect class="background"></rect><text y="-10.1"><tspan dy="1.1em" y="-0.1em" x="0" class="text-outer-tspan"><tspan font-weight="bold" class="text-inner-tspan" font-style="normal">Plan</tspan><tspan font-weight="bold" class="text-inner-tspan" font-style="normal"> de</tspan><tspan font-weight="bold" class="text-inner-tspan" font-style="normal"> production</tspan></tspan><tspan dy="1.1em" y="1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">Passerelle</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> de</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> sortie</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> ·</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> Ancre</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> d'identité</tspan></tspan><tspan dy="1.1em" y="2.1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">Chaîne</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> de</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> fabrication</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> ·</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> agents</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> BDOS</tspan></tspan></text></g></g></g><g transform="translate(142.16015625, 176.1999969482422)" data-id="PREUVE" data-node="true" id="flowchart-PREUVE-1" class="node default default flowchart-label"><rect height="58.599998474121094" width="257.671875" y="-29.299999237060547" x="-128.8359375" ry="0" rx="0" style="" class="basic label-container"></rect><g transform="translate(0, -21.799999237060547)" style="" class="label"><rect></rect><g><rect class="background"></rect><text y="-10.1"><tspan dy="1.1em" y="-0.1em" x="0" class="text-outer-tspan"><tspan font-weight="bold" class="text-inner-tspan" font-style="normal">Plan</tspan><tspan font-weight="bold" class="text-inner-tspan" font-style="normal"> de</tspan><tspan font-weight="bold" class="text-inner-tspan" font-style="normal"> preuve</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> (hors</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> de</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> portée)</tspan></tspan><tspan dy="1.1em" y="1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">Coffre</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> de</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> preuve</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> ·</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> Arche</tspan></tspan><tspan dy="1.1em" y="2.1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">Registre</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> des</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> contrôles</tspan></tspan></text></g></g></g><g transform="translate(416.42919921875, 176.1999969482422)" data-id="OBS" data-node="true" id="flowchart-OBS-2" class="node default default flowchart-label"><rect height="58.599998474121094" width="210.8662109375" y="-29.299999237060547" x="-105.43310546875" ry="0" rx="0" style="" class="basic label-container"></rect><g transform="translate(0, -21.799999237060547)" style="" class="label"><rect></rect><g><rect class="background"></rect><text y="-10.1"><tspan dy="1.1em" y="-0.1em" x="0" class="text-outer-tspan"><tspan font-weight="bold" class="text-inner-tspan" font-style="normal">Plan</tspan><tspan font-weight="bold" class="text-inner-tspan" font-style="normal"> d'observation</tspan></tspan><tspan dy="1.1em" y="1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">Forêt</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> de</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> leurres</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> ·</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> Miroir</tspan></tspan><tspan dy="1.1em" y="2.1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">Veille</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> active</tspan></tspan></text></g></g></g><g transform="translate(416.42919921875, 323.0999946594238)" data-id="DEC" data-node="true" id="flowchart-DEC-3" class="node default default flowchart-label"><rect height="58.599998474121094" width="163.8916015625" y="-29.299999237060547" x="-81.94580078125" ry="0" rx="0" style="" class="basic label-container"></rect><g transform="translate(0, -21.799999237060547)" style="" class="label"><rect></rect><g><rect class="background"></rect><text y="-10.1"><tspan dy="1.1em" y="-0.1em" x="0" class="text-outer-tspan"><tspan font-weight="bold" class="text-inner-tspan" font-style="normal">Plan</tspan><tspan font-weight="bold" class="text-inner-tspan" font-style="normal"> de</tspan><tspan font-weight="bold" class="text-inner-tspan" font-style="normal"> décision</tspan></tspan><tspan dy="1.1em" y="1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">Salle</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> du</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> Porte-épée</tspan></tspan><tspan dy="1.1em" y="2.1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">Tableau</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> de</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> bord</tspan></tspan></text></g></g></g><g transform="translate(544.071533203125, 444.54999351501465)" data-id="COOP" data-node="true" id="flowchart-COOP-4" class="node default default flowchart-label"><rect height="44.29999923706055" width="265.484375" y="-22.149999618530273" x="-132.7421875" ry="0" rx="0" style="" class="basic label-container"></rect><g transform="translate(0, -14.649999618530273)" style="" class="label"><rect></rect><g><rect class="background"></rect><text y="-10.1"><tspan dy="1.1em" y="-0.1em" x="0" class="text-outer-tspan"><tspan font-weight="bold" class="text-inner-tspan" font-style="normal">Plan</tspan><tspan font-weight="bold" class="text-inner-tspan" font-style="normal"> de</tspan><tspan font-weight="bold" class="text-inner-tspan" font-style="normal"> coopération</tspan></tspan><tspan dy="1.1em" y="1em" x="0" class="text-outer-tspan"><tspan font-weight="normal" class="text-inner-tspan" font-style="normal">Relais</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> :</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> CERT,</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> NIS2,</tspan><tspan font-weight="normal" class="text-inner-tspan" font-style="normal"> divulgation</tspan></tspan></text></g></g></g></g></g></g></svg></figure>
+<p><strong>Le plan de production</strong> est celui où l’adversaire est supposé présent. Il porte les points d’application : la Passerelle de sortie, l’Ancre d’identité de production, la Chaîne de fabrication qui décide de ce qui a le droit de s’exécuter, et les agents d’hôte (BDOS ou équivalents).</p>
+<p><strong>Le plan de preuve</strong> est hors de portée de la production : on y dépose, on n’y relit pas depuis la production. Il garde ce qui doit survivre à une compromission totale : la trace (Coffre de preuve), la capacité de repartir (Arche) et la mémoire des raisons (Registre des contrôles).</p>
+<p><strong>Le plan de décision</strong> est celui où l’on tranche. La Salle du Porte-épée reçoit les signaux, exécute le réversible, prépare et fait approuver l’irréversible. Le Tableau de bord rend visible l’état de la grille de l’essai.</p>
+<p><strong>Le plan d’observation</strong> regarde ce que l’adversaire regarde : l’extérieur (Miroir), les pièges posés à l’intérieur (Forêt de leurres) et les hypothèses que l’absence d’alerte ne suffit pas à réfuter (Veille active).</p>
+<p><strong>Le plan de coopération</strong> est celui que l’univers de Liu Cixin n’a pas : notifier, partager, divulguer, et publier des preuves vérifiables de l’extérieur.</p>
+<hr />
+<h2 id="4-les-onze-applications"><span class="num">4</span> Les onze applications</h2>
+<p>Chaque fiche suit le même plan : rôle, principes servis, ce qui entre et ce qui sort, zone de confiance et « qui peut la lever », briques existantes, indicateur, apport de BDOS, mode d’échec à surveiller.</p>
+<h3 id="41-passerelle-de-sortie-et-dns-protecteur"><span class="num">4.1</span> Passerelle de sortie et DNS protecteur</h3>
+<p class="volet"><strong>Rôle.</strong> Faire de la sortie l’exception déclarée. Tout flux sortant d’un serveur, d’un système industriel ou d’un poste d’administration passe par un mandataire explicite qui l’autorise par destination et par identité de service, ou il ne passe pas. Le résolveur DNS est imposé, les résolutions directes et le DNS chiffré non maîtrisé sont bloqués, les domaines malveillants sont résolus vers un puits interne dont chaque requête vaut alerte.</p>
+<p class="volet"><strong>Principes.</strong> 3.1 (ce qui sort), 3.3 (les émissions involontaires deviennent visibles), 3.7 (un point unique où couper), 3.13 (ne pas servir de rebond aux autres).</p>
+<p class="volet"><strong>Entrées et sorties.</strong> Entrées : la politique de sortie, signée et publiée par le Registre ; les ordres de coupure de la Salle. Sorties : un journal de chaque flux (source, identité, destination, volume) vers le Coffre de preuve.</p>
+<p class="volet"><strong>Zone de confiance et levée.</strong> Plan de production. C’est une règle, pas une loi : l’équipe réseau peut ouvrir un flux ; elle le fait par un changement de politique enregistré au Registre, avec une date d’expiration pour toute ouverture temporaire. Les ouvertures permanentes vers « tout Internet sur 443 » sont refusées par le validateur de politique.</p>
+<p class="volet"><strong>Briques existantes.</strong> Mandataires explicites (Squid, Envoy), politiques de sortie des orchestrateurs (NetworkPolicy, Cilium), points de terminaison privés des fournisseurs de nuage, résolveurs avec zones de politique (Unbound ou BIND avec RPZ) ; références : ANSSI PA-022 et PA-066, NSA/CISA <em>Selecting a Protective DNS Service</em> (2021), IEC 62443-3-2 pour les zones et conduits industriels.</p>
+<p class="volet"><strong>Indicateur.</strong> Part des flux sortants qui passent par le mandataire ; nombre de destinations distinctes par hôte et par jour ; résultat du test de démarrage à froid (un hôte neuf peut-il joindre une adresse arbitraire sur le port 443 ?).</p>
+<p class="volet"><strong>Apport de BDOS.</strong> Le compilateur <code>bdos/blackdomain/compiler.py</code> traduit les enclaves en règles <code>nftables</code> sur l’hôte : la Passerelle décide au centre, BDOS applique au plus près de la charge, et l’un couvre la panne de l’autre.</p>
+<p class="volet"><strong>Mode d’échec.</strong> La liste d’autorisation par domaine sans identité de service, qui laisse sortir n’importe quel processus vers un dépôt de code ou un CDN autorisé (MITRE ATT&amp;CK T1102). Et la passerelle unique sans redondance, qui devient le point de coupure de l’attaquant autant que celui du défenseur.</p>
+<h3 id="42-registre-des-contrôles--la-loi-"><span class="num">4.2</span> Registre des contrôles (« la Loi »)</h3>
+<p class="volet"><strong>Rôle.</strong> Tenir, sous forme de données et non de documents, la liste des contrôles de l’organisation avec leurs raisons : de quelle attaque chacun est la cicatrice, contre quelle arme il a été conçu, s’il tient par propriété ou par détection, qui peut le lever, s’il se défait, comment un tiers vérifie qu’il tient, qui en répond, quand on le revoit, et quelles exceptions datées le suspendent. Le Registre publie ensuite les politiques signées que les points d’application appliquent.</p>
+<p class="volet"><strong>Principes.</strong> 3.2 (loi ou règle, preuve ou promesse), 3.8 (aucun contrôle irréversible dans une seule main), 3.9 (l’hypothèse de menace écrite), 3.10 (revues et exceptions qui expirent), 3.13 (chaque règle porte sa cicatrice).</p>
+<p class="volet"><strong>Entrées et sorties.</strong> Entrées : les propositions de changement, revues et approuvées. Sorties : les politiques signées vers la Passerelle, la Chaîne de fabrication et les agents d’hôte ; la couverture et les exceptions actives vers le Tableau de bord.</p>
+<p class="volet"><strong>Zone de confiance et levée.</strong> Plan de preuve. Le Registre est une cible de premier ordre (le désarmer, c’est désarmer tout le reste) : toute modification d’un contrôle marqué « loi » ou « irréversible » exige un quorum, et chaque version publiée est signée et horodatée dans le Coffre.</p>
+<p class="volet"><strong>Briques existantes.</strong> Gestion de configuration en dépôt de code avec revue obligatoire, politique en code (OPA/Rego, Kyverno), signature des politiques ; références : NIST SP 800-160 vol. 2 pour la résilience, NIST CSF 2.0 pour la fonction « Govern ».</p>
+<p class="volet"><strong>Indicateur.</strong> Part des contrôles critiques qui résistent à un administrateur compromis ; principes sans contrôle ; classes d’effet défendues seulement par détection ; nombre et âge des exceptions actives.</p>
+<p class="volet"><strong>Apport de BDOS.</strong> C’est la première des deux applications dont ce dépôt fournit un squelette : <code>bdos/registry/</code> charge un registre TOML, refuse les incohérences et calcule la couverture (section 9).</p>
+<p class="volet"><strong>Mode d’échec.</strong> Le registre que personne ne tient à jour et qui finit par décrire une organisation qui n’existe plus. D’où la règle « pas de politique publiée sans entrée au Registre » : si le point d’application n’accepte que des politiques signées par le Registre, le Registre ne peut pas mentir longtemps.</p>
+<h3 id="43-coffre-de-preuve"><span class="num">4.3</span> Coffre de preuve</h3>
+<p class="volet"><strong>Rôle.</strong> Recevoir la télémétrie dès sa production, la conserver de façon inaltérable dans un compte distinct, en vérifier l’intégrité et signaler les capteurs devenus muets. Le Coffre est l’endroit où l’on reconstruit ce qui s’est passé quand la production ne dit plus la vérité.</p>
+<p class="volet"><strong>Principes.</strong> 3.2 (une trace qu’un administrateur compromis ne peut pas défaire), 3.7 (télémétrie hors de l’hôte, capteurs hétérogènes, battement de cœur).</p>
+<p class="volet"><strong>Entrées et sorties.</strong> Entrées : journaux des hôtes, du réseau, de l’identité, des applications, de la Passerelle, de la Salle ; battements de cœur des capteurs. Sorties : alertes et silences vers la Salle ; indicateurs vers le Tableau de bord ; empreintes quotidiennes publiées hors du compte.</p>
+<p class="volet"><strong>Zone de confiance et levée.</strong> Plan de preuve, en écriture seule depuis la production (R1). La rétention est une loi : stockage en mode conformité, que même l’administrateur du compte ne peut raccourcir. L’empreinte quotidienne de la chaîne est publiée dans un lieu indépendant (un autre fournisseur, un journal de transparence, voire un registre papier signé), si bien qu’un tiers peut vérifier qu’aucune journée n’a été réécrite.</p>
+<p class="volet"><strong>Briques existantes.</strong> Stockage objet avec verrouillage en mode conformité, collecteurs et formats ouverts (OpenTelemetry, syslog signé), SIEM ; références : ANSSI PA-012 (journalisation), NIST SP 800-92.</p>
+<p class="volet"><strong>Indicateur.</strong> Jours de rétention effective ; trous de télémétrie détectés et délai de détection d’un capteur muet ; écarts entre empreintes publiées et recalculées (attendus : zéro).</p>
+<p class="volet"><strong>Apport de BDOS.</strong> Le journal chaîné de <code>bdos/core/events.py</code> est le format natif : chaque enregistrement engage l’empreinte du précédent, ce qui rend toute suppression détectable ; le Coffre en est la version à l’échelle de la flotte, avec ancrage externe des empreintes.</p>
+<p class="volet"><strong>Mode d’échec.</strong> La collecte par un agent qui partage les identifiants de la production, ou qui relit le Coffre pour « enrichir » ses alertes : un seul chemin de lecture depuis la production suffit à rendre la preuve négociable.</p>
+<h3 id="44-arche"><span class="num">4.4</span> Arche</h3>
+<p class="volet"><strong>Rôle.</strong> Garder une copie des fonctions vitales qui puisse quitter le système qu’elle sauvegarde : hors ligne ou poussée à travers une diode vers un site sans retour, sous des identités qui n’existent pas en production, et dont la restauration dans une salle blanche est chronométrée au moins une fois par an.</p>
+<p class="volet"><strong>Principes.</strong> 3.11 (ne pas masser la flotte, garder un vaisseau qui peut partir), 3.2 (pour la copie immuable), 3.9 (une défense de nature différente de celles qui protègent la production).</p>
+<p class="volet"><strong>Entrées et sorties.</strong> Entrées : flux de copie poussés depuis la production, jamais tirés par l’Arche avec des identifiants de production. Sorties : rien vers la production en temps normal ; en crise, une restauration dans un environnement propre, décidée à quorum.</p>
+<p class="volet"><strong>Zone de confiance et levée.</strong> Plan de preuve, domaine d’administration propre, fournisseur différent si possible (R8). La destruction d’une copie et la restauration qui écrase sont irréversibles : quorum obligatoire (R3).</p>
+<p class="volet"><strong>Briques existantes.</strong> Règle 3-2-1-1-0 (trois copies, deux supports, une hors site, une hors ligne ou immuable, zéro erreur de vérification), bandes ou stockage déconnecté, diodes de données pour les environnements les plus sensibles, environnement de restauration isolé.</p>
+<p class="volet"><strong>Indicateur.</strong> Durée chronométrée de restauration du cœur, mesurée en exercice et non estimée ; part des fonctions vitales couvertes ; date de la dernière restauration complète réussie.</p>
+<p class="volet"><strong>Apport de BDOS.</strong> Aucun direct : l’Arche est volontairement d’une autre nature que la production. C’est la meilleure illustration de R8.</p>
+<p class="volet"><strong>Mode d’échec.</strong> La sauvegarde administrée depuis l’annuaire de production, que l’attaquant supprime avant de chiffrer ; et la copie jamais restaurée, dont on découvre le jour de la crise qu’elle ne contient pas ce qu’on croyait.</p>
+<h3 id="45-ancre-didentité"><span class="num">4.5</span> Ancre d’identité</h3>
+<p class="volet"><strong>Rôle.</strong> Être l’ancre de confiance des personnes et des charges : authentification multifacteur résistante à l’hameçonnage sur tout accès distant et administratif, secrets et certificats de courte durée, identités de charge émises automatiquement, liaison des jetons au poste, inventaire cryptographique et migration vers l’échange de clés hybride post-quantique pour les flux qui doivent rester confidentiels longtemps. L’Ancre a aussi son plan de compromission : que fait-on le jour où c’est elle qui tombe ?</p>
+<p class="volet"><strong>Principes.</strong> 3.4 (une émission ne se rappelle pas : des secrets courts périment rétroactivement ce qui a déjà fui), 3.12 (la chaîne de suspicion se déplace vers l’ancre, qu’il faut protéger et surveiller), 3.11 (les niveaux d’administration étanches).</p>
+<p class="volet"><strong>Entrées et sorties.</strong> Entrées : les politiques d’accès du Registre ; les ordres de révocation de la Salle. Sorties : jetons et certificats courts ; journaux d’authentification vers le Coffre ; capacités signées pour les actions privilégiées.</p>
+<p class="volet"><strong>Zone de confiance et levée.</strong> Plan de production pour l’ancre courante ; une seconde ancre, minimale et distincte, sert les plans de preuve et de décision (R1), de sorte que la compromission de l’annuaire de production ne donne accès ni au Coffre, ni à l’Arche, ni à la Salle.</p>
+<p class="volet"><strong>Briques existantes.</strong> FIDO2/WebAuthn, identité de charge (SPIFFE/SPIRE), gestionnaires de secrets à baux courts, modules matériels de sécurité pour les clés racines, surveillance de la transparence des certificats ; références : NIST SP 800-207 (Zero Trust), FIPS 203 à 205 (cryptographie post-quantique), ANSSI PA-022 (administration sécurisée).</p>
+<p class="volet"><strong>Indicateur.</strong> Part des accès sous authentification résistante à l’hameçonnage ; âge médian et maximal des secrets statiques ; part des flux longs sous échange hybride ; délai de détection d’un jeton utilisé hors procédure.</p>
+<p class="volet"><strong>Apport de BDOS.</strong> La couche <code>bdos/safetynotice/</code> vérifie des capacités Ed25519 limitées à un principal, une classe d’action et une ressource, à usage unique et à durée courte : c’est le prolongement naturel de l’Ancre sur l’hôte. L’Ancre porte ce que BDOS ne fait pas seul : la clé d’émission dans un module matériel à quorum, et un registre de révocation partagé entre instances.</p>
+<p class="volet"><strong>Mode d’échec.</strong> L’ancre unique pour tout, dont la compromission (vol de la clé de signature des jetons, administrateur de l’annuaire) donne la flotte entière ; et la MFA « partout sauf » les comptes de service et les accès d’urgence, qui sont précisément ceux que l’attaquant cherche.</p>
+<h3 id="46-salle-du-porte-épée"><span class="num">4.6</span> Salle du Porte-épée</h3>
+<p class="volet"><strong>Rôle.</strong> Décider et exécuter la réponse. La Salle reçoit les signaux (touche d’un leurre, exposition, silence d’un capteur, alerte de détection), les classe dans une matrice réversibilité × rayon d’impact, exécute immédiatement ce qui est réversible sous une autorité pré-déléguée, prépare et fait approuver à quorum ce qui ne l’est pas, et garde une action par défaut si personne ne répond (la « main morte » : un isolement provisoire plutôt que l’attente). Elle bascule les répondants sur un canal hors bande dès que la messagerie courante est suspecte.</p>
+<p class="volet"><strong>Principes.</strong> 3.8 (la clé ne doit pas être une personne), 3.7 (couper en un seul geste, coordonner hors de portée), 3.11 (une autorité qui peut couper avant la preuve).</p>
+<p class="volet"><strong>La matrice.</strong></p>
+<div class="table-wrap"><table>
+<thead>
+<tr class="header">
+<th></th>
+<th>Rayon faible (un hôte, un compte)</th>
+<th>Rayon large (un service, un site)</th>
+<th>Rayon total (l’organisation, les joyaux)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Réversible</strong></td>
+<td>automatique, immédiat</td>
+<td>automatique, astreinte prévenue</td>
+<td>astreinte + un second, en minutes</td>
+</tr>
+<tr class="even">
+<td><strong>Irréversible</strong></td>
+<td>deux personnes</td>
+<td>quorum, délai délibéré</td>
+<td>quorum élargi, délai, direction informée</td>
+</tr>
+</tbody>
+</table></div>
+<p class="volet"><strong>Entrées et sorties.</strong> Entrées : alertes du Coffre, touches de la Forêt, expositions du Miroir, hypothèses de la Veille. Sorties : ordres de coupure vers la Passerelle, de révocation vers l’Ancre, de quarantaine ou de scellement vers les agents d’hôte ; incidents qualifiés vers le Relais ; tout est journalisé au Coffre.</p>
+<p class="volet"><strong>Zone de confiance et levée.</strong> Plan de décision, avec ses propres identités. Désactiver un automatisme de confinement est lui-même une action à quorum : l’attaquant qui prend la Salle ne doit pas pouvoir la rendre muette d’un geste.</p>
+<p class="volet"><strong>Briques existantes.</strong> Orchestration de la réponse (SOAR), gestion des astreintes, approbations signées, partage de secret de Shamir pour les clés les plus sensibles (PCI DSS 3.7.6 pour le contrôle à plusieurs) ; références : NIST SP 800-61 r3 pour la réponse à incident, ANSSI PA-022.</p>
+<p class="volet"><strong>Indicateur.</strong> Degré d’exécution : part des alertes qui aboutissent à l’isolement prévu, et en combien de temps ; rôles à titulaire unique ; couverture des nuits et des week-ends ; délai de bascule hors bande en exercice.</p>
+<p class="volet"><strong>Apport de BDOS.</strong> Le Sentinel de <code>bdos/sentinel/</code> est le réflexe local de la Salle : score d’anomalie, quarantaine à vitesse machine. Le squelette (section 9) ajoute le quorum m-sur-n devant le scellement : quand la politique l’exige, le Sentinel garde la quarantaine automatique (réversible) et ne fait plus que recommander le scellement (irréversible).</p>
+<p class="volet"><strong>Mode d’échec.</strong> Les deux échecs de la trilogie. Celui de Cheng Xin : la capacité existe, mais personne n’est autorisé, entraîné ou disposé à l’exercer à trois heures du matin, et l’alerte reste une alerte. Celui de l’automate sans cage : un isolement irréversible déclenché par un faux positif, ou par un attaquant qui a compris comment provoquer la défense.</p>
+<h3 id="47-forêt-de-leurres"><span class="num">4.7</span> Forêt de leurres</h3>
+<p class="volet"><strong>Rôle.</strong> Poser dans l’environnement des objets qu’aucun usage légitime ne touche (identifiants leurres dans les postes d’administration et les coffres, documents balisés, comptes canaris, services pièges internes) et faire de chaque contact un signal à haute confiance, acheminé vers quelqu’un qui sera réveillé.</p>
+<p class="volet"><strong>Principes.</strong> 3.6 (le sortilège : mesurer la forêt avec une coordonnée qui n’est pas la sienne), 3.10 (une mesure qui ne dépend pas de la détection de l’arme).</p>
+<p class="volet"><strong>Entrées et sorties.</strong> Entrées : le plan de déception (où, quoi, pour quelle hypothèse). Sorties : touches vers la Salle, avec un niveau de confiance qui autorise l’isolement réversible immédiat.</p>
+<p class="volet"><strong>Zone de confiance et levée.</strong> Plan d’observation. La liste des leurres est connue d’une équipe restreinte et conservée hors de la production : un leurre que l’administrateur de production peut lister est un leurre que l’attaquant devenu administrateur peut éviter.</p>
+<p class="volet"><strong>Briques existantes.</strong> Jetons et identifiants leurres (Canarytokens, OpenCanary), pots de miel internes, comptes d’annuaire jamais utilisés ; références : MITRE Engage pour la planification, MITRE ATT&amp;CK pour choisir où l’adversaire passera.</p>
+<p class="volet"><strong>Indicateur.</strong> Délai entre la touche et sa prise en compte ; touches internes (nulles hors exercice) ; âge des leurres et part renouvelée dans l’année.</p>
+<p class="volet"><strong>Apport de BDOS.</strong> <code>bdos/darkforest/</code> frappe des jetons canaris et des identifiants leurres, et la moindre touche pèse assez lourd pour déclencher la quarantaine. La Forêt les enregistre centralement, les fait vieillir et achemine les touches.</p>
+<p class="volet"><strong>Mode d’échec.</strong> Le leurre que personne ne surveille, dont la touche arrive dans une boîte de réception lue le lundi ; et le leurre trop parfait, qui finit par être utilisé par un script légitime et apprend à l’équipe à ignorer ses alertes.</p>
+<h3 id="48-miroir-de-ladversaire"><span class="num">4.8</span> Miroir de l’adversaire</h3>
+<p class="volet"><strong>Rôle.</strong> Voir l’organisation comme la voit un inconnu : inventaire continu de la surface exposée, surveillance des journaux de transparence des certificats, recherche de secrets dans les dépôts et les pastes publics, enregistrements DNS orphelins, empreinte des fournisseurs, corrélation avec le catalogue KEV. La règle de fonctionnement est simple : une exposition non prévue est un incident, avec un propriétaire et un délai, pas une ligne de rapport.</p>
+<p class="volet"><strong>Principes.</strong> 3.3 (toute émission est une coordonnée, y compris celles des fournisseurs), 3.10 (l’adversaire a progressé pendant que vous ne regardiez pas), 3.13 (les résidus qu’on laisse derrière soi).</p>
+<p class="volet"><strong>Entrées et sorties.</strong> Entrées : sources publiques, inventaire déclaré, liste des fournisseurs. Sorties : incidents d’exposition vers la Salle ; écarts entre inventaire déclaré et observé vers le Registre et le Tableau de bord.</p>
+<p class="volet"><strong>Zone de confiance et levée.</strong> Plan d’observation, idéalement opéré depuis l’extérieur du réseau de l’organisation (il doit voir ce que voit un inconnu, pas ce que voit un employé).</p>
+<p class="volet"><strong>Briques existantes.</strong> Outils de gestion de la surface d’attaque externe, surveillance CT (RFC 6962), détection de secrets, catalogue KEV de la CISA (BOD 22-01) ; références : NIS2 art. 21 et DORA art. 28 pour la cartographie des tiers.</p>
+<p class="volet"><strong>Indicateur.</strong> Temps avant le premier balayage d’un hôte neuf exposé (mesuré avec un hôte témoin) ; délai médian d’atténuation des KEV sur les actifs exposés ; délai entre l’annonce d’une compromission chez un fournisseur et la fin de la chasse correspondante ; DNS sans cible vivante.</p>
+<p class="volet"><strong>Apport de BDOS.</strong> Aucun direct ; le Miroir alimente en revanche les politiques que BDOS applique (destinations à couper, services à retirer).</p>
+<p class="volet"><strong>Mode d’échec.</strong> Le rapport mensuel d’exposition que personne ne traite, et l’inventaire « déclaré » qui sert de référence alors que l’observé le contredit.</p>
+<h3 id="49-chaîne-de-fabrication-attestée"><span class="num">4.9</span> Chaîne de fabrication attestée</h3>
+<p class="volet"><strong>Rôle.</strong> Décider de ce qui a le droit de s’exécuter. Les artefacts sont construits sur une chaîne isolée qui produit une provenance signée ; l’admission en production refuse ce qui n’est pas signé ou dont la provenance ne correspond pas. La chaîne fait aussi passer à chaque version un banc d’oracles : tests automatisés qui vérifient que les services répondent de façon indifférenciée (même message, même temps, même code) quelle que soit la justesse de l’hypothèse de l’attaquant.</p>
+<p class="volet"><strong>Principes.</strong> 3.2 (une admission qui refuse le non signé est une loi pour l’exécution), 3.5 (« Ne répondez pas » : la réponse est l’information), 3.12 (la confiance se déplace vers la chaîne de fabrication, qu’il faut protéger).</p>
+<p class="volet"><strong>Entrées et sorties.</strong> Entrées : code source, dépendances, politiques d’admission du Registre. Sorties : artefacts signés, provenance, résultats du banc d’oracles ; journaux vers le Coffre.</p>
+<p class="volet"><strong>Zone de confiance et levée.</strong> Plan de production, mais les clés de signature vivent dans un module matériel hors de portée des administrateurs de la chaîne ; l’exception d’admission (« laisser passer ce conteneur non signé ») est une exception datée au Registre.</p>
+<p class="volet"><strong>Briques existantes.</strong> SLSA pour les niveaux de provenance, Sigstore/cosign pour la signature, contrôleurs d’admission (Kyverno, OPA Gatekeeper), nomenclatures logicielles (SBOM), détection de secrets avant validation ; références : règlement européen sur la cyberrésilience (CRA) pour les obligations des fabricants.</p>
+<p class="volet"><strong>Indicateur.</strong> Part des charges en production dont la provenance est vérifiée à l’admission ; exceptions d’admission actives ; résultats du banc d’oracles (oracles connus et acceptés, nouveaux oracles).</p>
+<p class="volet"><strong>Apport de BDOS.</strong> Les profils <code>seccomp</code> et l’interposition de commandes de <code>os/</code> complètent l’admission au niveau de l’hôte : ce qui est admis reste borné dans ce qu’il peut faire.</p>
+<p class="volet"><strong>Mode d’échec.</strong> La chaîne de fabrication elle-même compromise (le cas SolarWinds), qui signe fidèlement un artefact piégé : la signature prouve l’origine, pas l’innocuité. D’où la provenance qui décrit aussi les entrées, et la surveillance des écarts de comportement après admission.</p>
+<h3 id="410-veille-active"><span class="num">4.10</span> Veille active</h3>
+<p class="volet"><strong>Rôle.</strong> Refuser que l’absence d’alerte vaille absence d’adversaire. La Veille tient un carnet d’hypothèses de chasse (« un attaquant installé utiliserait tel mécanisme de persistance ; le cherchons-nous ? »), conduit des évaluations de compromission aux moments de transition (acquisition, changement de prestataire, départ d’un administrateur), organise les exercices chronométrés et les tests fondés sur la menace.</p>
+<p class="volet"><strong>Principes.</strong> 3.10 (deux siècles sans défaite ne prouvent rien), 3.9 (tester contre l’arme suivante, pas contre la précédente).</p>
+<p class="volet"><strong>Entrées et sorties.</strong> Entrées : renseignement sur la menace (Relais), écarts du Miroir, données du Coffre. Sorties : hypothèses testées et leurs résultats ; exercices et leurs chronos vers le Tableau de bord ; incidents vers la Salle quand une hypothèse se confirme.</p>
+<p class="volet"><strong>Zone de confiance et levée.</strong> Plan d’observation. La Veille lit le Coffre avec ses propres identités, jamais celles de la production.</p>
+<p class="volet"><strong>Briques existantes.</strong> Méthodes de chasse par hypothèses, MITRE ATT&amp;CK pour couvrir les techniques, tests TIBER-EU et tests fondés sur la menace de DORA (art. 26) pour les entités concernées.</p>
+<p class="volet"><strong>Indicateur.</strong> Hypothèses de chasse testées par mois ; délai de détection en exercice ; part des transitions accompagnées d’une évaluation de compromission.</p>
+<p class="volet"><strong>Apport de BDOS.</strong> <code>python -m bdos simulate</code> est un exercice miniature : une rafale d’agent autonome rejouée de façon déterministe, avec un résultat attendu. La Veille généralise : chaque contrôle du Registre devrait avoir son exercice.</p>
+<p class="volet"><strong>Mode d’échec.</strong> La chasse qui ne cherche que ce que les outils savent déjà détecter, et l’exercice dont on connaît la date, le scénario et la fin.</p>
+<h3 id="411-relais-de-coopération"><span class="num">4.11</span> Relais de coopération</h3>
+<p class="volet"><strong>Rôle.</strong> Parler, au bon moment, à ceux qui doivent savoir. Le Relais tient les délais de notification (pour NIS2 : alerte précoce sous 24 heures, notification sous 72 heures, rapport final sous un mois), le partage de renseignement marqué selon le protocole TLP avec les CERT et les pairs du secteur, la réception des signalements de chercheurs (fichier <code>security.txt</code>, RFC 9116, politique de divulgation coordonnée), et la publication d’indicateurs que n’importe qui peut vérifier de l’extérieur : enregistrements DMARC, ROA RPKI, filtrage d’usurpation d’adresses (BCP 38).</p>
+<p class="volet"><strong>Principes.</strong> 3.12 (raccourcir la chaîne de suspicion par des institutions), 3.13 (le milieu commun), et la posture « coopérer » de l’essai (5.2), celle que la trilogie n’offre pas.</p>
+<p class="volet"><strong>Entrées et sorties.</strong> Entrées : incidents qualifiés par la Salle, signalements extérieurs, renseignement reçu. Sorties : notifications réglementaires, partages TLP, avis de divulgation, indicateurs publiés ; renseignement reçu vers la Veille.</p>
+<p class="volet"><strong>Zone de confiance et levée.</strong> Plan de coopération, avec un canal qui fonctionne même quand la messagerie de l’organisation est compromise.</p>
+<p class="volet"><strong>Briques existantes.</strong> Plateformes de partage (MISP), TLP 2.0 du FIRST, CSIRT sectoriels et nationaux ; références : NIS2 art. 23, DORA pour les incidents majeurs liés aux TIC, RGPD art. 33 pour les violations de données personnelles.</p>
+<p class="volet"><strong>Indicateur.</strong> Délai entre la détection et le premier partage ; respect des délais réglementaires en exercice ; indicateurs vérifiables de l’extérieur en place (DMARC en rejet, ROA publiés).</p>
+<p class="volet"><strong>Apport de BDOS.</strong> Aucun direct ; le journal chaîné fournit en revanche des éléments qu’un tiers peut vérifier, ce qui rend le partage crédible.</p>
+<p class="volet"><strong>Mode d’échec.</strong> Le silence envers son propre camp, que l’essai range parmi les choses à refuser : l’organisation qui ne partage pas par peur de se signaler et qui découvre que ses pairs ont subi la même attaque la semaine précédente.</p>
+<h3 id="412-le-tableau-de-bord-transverse"><span class="num">4.12</span> Le tableau de bord transverse</h3>
+<p>Le Tableau de bord n’est pas une douzième fonction de défense : il rend visibles les indicateurs de la grille 5.1 de l’essai, alimentés par le Coffre, le Registre, la Salle et la Veille. Il porte aussi les indicateurs de soutenabilité que l’essai demande en 5.3 : nombre et âge des exceptions actives, taux de contournement (informatique fantôme), délai d’accès d’un nouvel arrivant, part du budget récurrent. Une architecture qui empêche de travailler se fait contourner, et le contournement ne se voit que si on le mesure.</p>
+<hr />
+<h2 id="5-quatre-flux"><span class="num">5</span> Quatre flux</h2>
+<h3 id="51-un-leurre-est-touché"><span class="num">5.1</span> Un leurre est touché</h3>
+<p>Le flux le plus important est aussi le plus simple : il montre R3 au travail.</p>
+<figure class="diagram" role="img"><svg aria-roledescription="sequence" role="graphics-document document" viewBox="-50 -10 1109 717" style="max-width: 1109px;" xmlns="http://www.w3.org/2000/svg" width="100%" id="dn-diagram-1"><g><line stroke-width="0.5px" class="200" y2="2000" x2="961" y1="5" x1="961" id="actor6" style="stroke: var(--line)"></line><g id="root-6"><rect class="actor actor-top" ry="3" rx="3" name="A" height="65" width="96" y="0" x="913" style="stroke: var(--line); fill: var(--accent-soft)"></rect><text style="text-anchor: middle; font-size: 16px; font-weight: 400; font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace;" class="actor" alignment-baseline="central" dominant-baseline="central" y="32.5" x="961"><tspan dy="0" x="961">Quorum</tspan></text></g></g><g><line stroke-width="0.5px" class="200" y2="2000" x2="841" y1="5" x1="841" id="actor5" style="stroke: var(--line)"></line><g id="root-5"><rect class="actor actor-top" ry="3" rx="3" name="I" height="65" width="96" y="0" x="793" style="stroke: var(--line); fill: var(--accent-soft)"></rect><text style="text-anchor: middle; font-size: 16px; font-weight: 400; font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace;" class="actor" alignment-baseline="central" dominant-baseline="central" y="32.5" x="841"><tspan dy="0" x="841">Ancre</tspan></text></g></g><g><line stroke-width="0.5px" class="200" y2="2000" x2="711" y1="5" x1="711" id="actor4" style="stroke: var(--line)"></line><g id="root-4"><rect class="actor actor-top" ry="3" rx="3" name="G" height="65" width="116" y="0" x="653" style="stroke: var(--line); fill: var(--accent-soft)"></rect><text style="text-anchor: middle; font-size: 16px; font-weight: 400; font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace;" class="actor" alignment-baseline="central" dominant-baseline="central" y="32.5" x="711"><tspan dy="0" x="711">Passerelle</tspan></text></g></g><g><line stroke-width="0.5px" class="200" y2="2000" x2="566" y1="5" x1="566" id="actor3" style="stroke: var(--line)"></line><g id="root-3"><rect class="actor actor-top" ry="3" rx="3" name="H" height="65" width="126" y="0" x="503" style="stroke: var(--line); fill: var(--accent-soft)"></rect><text style="text-anchor: middle; font-size: 16px; font-weight: 400; font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace;" class="actor" alignment-baseline="central" dominant-baseline="central" y="32.5" x="566"><tspan dy="0" x="566">Hôte (BDOS)</tspan></text></g></g><g><line stroke-width="0.5px" class="200" y2="2000" x2="387" y1="5" x1="387" id="actor2" style="stroke: var(--line)"></line><g id="root-2"><rect class="actor actor-top" ry="3" rx="3" name="S" height="65" width="96" y="0" x="339" style="stroke: var(--line); fill: var(--accent-soft)"></rect><text style="text-anchor: middle; font-size: 16px; font-weight: 400; font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace;" class="actor" alignment-baseline="central" dominant-baseline="central" y="32.5" x="387"><tspan dy="0" x="387">Salle</tspan></text></g></g><g><line stroke-width="0.5px" class="200" y2="2000" x2="198" y1="5" x1="198" id="actor1" style="stroke: var(--line)"></line><g id="root-1"><rect class="actor actor-top" ry="3" rx="3" name="V" height="65" width="96" y="0" x="150" style="stroke: var(--line); fill: var(--accent-soft)"></rect><text style="text-anchor: middle; font-size: 16px; font-weight: 400; font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace;" class="actor" alignment-baseline="central" dominant-baseline="central" y="32.5" x="198"><tspan dy="0" x="198">Coffre</tspan></text></g></g><g><line stroke-width="0.5px" class="200" y2="2000" x2="48" y1="5" x1="48" id="actor0" style="stroke: var(--line)"></line><g id="root-0"><rect class="actor actor-top" ry="3" rx="3" name="L" height="65" width="96" y="0" x="0" style="stroke: var(--line); fill: var(--accent-soft)"></rect><text style="text-anchor: middle; font-size: 16px; font-weight: 400; font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace;" class="actor" alignment-baseline="central" dominant-baseline="central" y="32.5" x="48"><tspan dy="0" x="48">Leurres</tspan></text></g></g><style>#dn-diagram-1{font-family:"IBM Plex Mono",Menlo,Consolas,monospace;font-size:13px;fill:var(--fg);}#dn-diagram-1 .error-icon{fill:var(--bg);}#dn-diagram-1 .error-text{fill:var(--fg);stroke:var(--fg);}#dn-diagram-1 .edge-thickness-normal{stroke-width:2px;}#dn-diagram-1 .edge-thickness-thick{stroke-width:3.5px;}#dn-diagram-1 .edge-pattern-solid{stroke-dasharray:0;}#dn-diagram-1 .edge-pattern-dashed{stroke-dasharray:3;}#dn-diagram-1 .edge-pattern-dotted{stroke-dasharray:2;}#dn-diagram-1 .marker{fill:var(--muted);stroke:var(--muted);}#dn-diagram-1 .marker.cross{stroke:var(--muted);}#dn-diagram-1 svg{font-family:"IBM Plex Mono",Menlo,Consolas,monospace;font-size:13px;}#dn-diagram-1 .actor{stroke:var(--accent);fill:var(--accent-soft);}#dn-diagram-1 text.actor&gt;tspan{fill:var(--fg);stroke:none;}#dn-diagram-1 .actor-line{stroke:var(--line);}#dn-diagram-1 .messageLine0{stroke-width:1.5;stroke-dasharray:none;stroke:var(--muted);}#dn-diagram-1 .messageLine1{stroke-width:1.5;stroke-dasharray:2,2;stroke:var(--muted);}#dn-diagram-1 #arrowhead path{fill:var(--muted);stroke:var(--muted);}#dn-diagram-1 .sequenceNumber{fill:var(--surface);}#dn-diagram-1 #sequencenumber{fill:var(--muted);}#dn-diagram-1 #crosshead path{fill:var(--muted);stroke:var(--muted);}#dn-diagram-1 .messageText{fill:var(--fg);stroke:none;}#dn-diagram-1 .labelBox{stroke:var(--line);fill:var(--bg);}#dn-diagram-1 .labelText,#dn-diagram-1 .labelText&gt;tspan{fill:var(--fg);stroke:none;}#dn-diagram-1 .loopText,#dn-diagram-1 .loopText&gt;tspan{fill:var(--fg);stroke:none;}#dn-diagram-1 .loopLine{stroke-width:2px;stroke-dasharray:2,2;stroke:var(--line);fill:var(--line);}#dn-diagram-1 .note{stroke:var(--line);fill:var(--bg);}#dn-diagram-1 .noteText,#dn-diagram-1 .noteText&gt;tspan{fill:var(--fg);stroke:none;}#dn-diagram-1 .activation0{fill:var(--accent-soft);stroke:var(--accent);}#dn-diagram-1 .activation1{fill:var(--accent-soft);stroke:var(--accent);}#dn-diagram-1 .activation2{fill:var(--accent-soft);stroke:var(--accent);}#dn-diagram-1 .actorPopupMenu{position:absolute;}#dn-diagram-1 .actorPopupMenuPanel{position:absolute;fill:var(--accent-soft);box-shadow:0px 8px 16px 0px rgba(0,0,0,0.2);filter:drop-shadow(3px 5px 2px rgb(0 0 0 / 0.4));}#dn-diagram-1 .actor-man line{stroke:var(--accent);fill:var(--accent-soft);}#dn-diagram-1 .actor-man circle,#dn-diagram-1 line{stroke:var(--accent);fill:var(--accent-soft);stroke-width:2px;}#dn-diagram-1 :root{--mermaid-font-family:"IBM Plex Mono",Menlo,Consolas,monospace;}</style><g></g><defs><symbol height="24" width="24" id="computer"><path d="M2 2v13h20v-13h-20zm18 11h-16v-9h16v9zm-10.228 6l.466-1h3.524l.467 1h-4.457zm14.228 3h-24l2-6h2.104l-1.33 4h18.45l-1.297-4h2.073l2 6zm-5-10h-14v-7h14v7z" transform="scale(.5)"></path></symbol></defs><defs><symbol clip-rule="evenodd" fill-rule="evenodd" id="database"><path d="M12.258.001l.256.004.255.005.253.008.251.01.249.012.247.015.246.016.242.019.241.02.239.023.236.024.233.027.231.028.229.031.225.032.223.034.22.036.217.038.214.04.211.041.208.043.205.045.201.046.198.048.194.05.191.051.187.053.183.054.18.056.175.057.172.059.168.06.163.061.16.063.155.064.15.066.074.033.073.033.071.034.07.034.069.035.068.035.067.035.066.035.064.036.064.036.062.036.06.036.06.037.058.037.058.037.055.038.055.038.053.038.052.038.051.039.05.039.048.039.047.039.045.04.044.04.043.04.041.04.04.041.039.041.037.041.036.041.034.041.033.042.032.042.03.042.029.042.027.042.026.043.024.043.023.043.021.043.02.043.018.044.017.043.015.044.013.044.012.044.011.045.009.044.007.045.006.045.004.045.002.045.001.045v17l-.001.045-.002.045-.004.045-.006.045-.007.045-.009.044-.011.045-.012.044-.013.044-.015.044-.017.043-.018.044-.02.043-.021.043-.023.043-.024.043-.026.043-.027.042-.029.042-.03.042-.032.042-.033.042-.034.041-.036.041-.037.041-.039.041-.04.041-.041.04-.043.04-.044.04-.045.04-.047.039-.048.039-.05.039-.051.039-.052.038-.053.038-.055.038-.055.038-.058.037-.058.037-.06.037-.06.036-.062.036-.064.036-.064.036-.066.035-.067.035-.068.035-.069.035-.07.034-.071.034-.073.033-.074.033-.15.066-.155.064-.16.063-.163.061-.168.06-.172.059-.175.057-.18.056-.183.054-.187.053-.191.051-.194.05-.198.048-.201.046-.205.045-.208.043-.211.041-.214.04-.217.038-.22.036-.223.034-.225.032-.229.031-.231.028-.233.027-.236.024-.239.023-.241.02-.242.019-.246.016-.247.015-.249.012-.251.01-.253.008-.255.005-.256.004-.258.001-.258-.001-.256-.004-.255-.005-.253-.008-.251-.01-.249-.012-.247-.015-.245-.016-.243-.019-.241-.02-.238-.023-.236-.024-.234-.027-.231-.028-.228-.031-.226-.032-.223-.034-.22-.036-.217-.038-.214-.04-.211-.041-.208-.043-.204-.045-.201-.046-.198-.048-.195-.05-.19-.051-.187-.053-.184-.054-.179-.056-.176-.057-.172-.059-.167-.06-.164-.061-.159-.063-.155-.064-.151-.066-.074-.033-.072-.033-.072-.034-.07-.034-.069-.035-.068-.035-.067-.035-.066-.035-.064-.036-.063-.036-.062-.036-.061-.036-.06-.037-.058-.037-.057-.037-.056-.038-.055-.038-.053-.038-.052-.038-.051-.039-.049-.039-.049-.039-.046-.039-.046-.04-.044-.04-.043-.04-.041-.04-.04-.041-.039-.041-.037-.041-.036-.041-.034-.041-.033-.042-.032-.042-.03-.042-.029-.042-.027-.042-.026-.043-.024-.043-.023-.043-.021-.043-.02-.043-.018-.044-.017-.043-.015-.044-.013-.044-.012-.044-.011-.045-.009-.044-.007-.045-.006-.045-.004-.045-.002-.045-.001-.045v-17l.001-.045.002-.045.004-.045.006-.045.007-.045.009-.044.011-.045.012-.044.013-.044.015-.044.017-.043.018-.044.02-.043.021-.043.023-.043.024-.043.026-.043.027-.042.029-.042.03-.042.032-.042.033-.042.034-.041.036-.041.037-.041.039-.041.04-.041.041-.04.043-.04.044-.04.046-.04.046-.039.049-.039.049-.039.051-.039.052-.038.053-.038.055-.038.056-.038.057-.037.058-.037.06-.037.061-.036.062-.036.063-.036.064-.036.066-.035.067-.035.068-.035.069-.035.07-.034.072-.034.072-.033.074-.033.151-.066.155-.064.159-.063.164-.061.167-.06.172-.059.176-.057.179-.056.184-.054.187-.053.19-.051.195-.05.198-.048.201-.046.204-.045.208-.043.211-.041.214-.04.217-.038.22-.036.223-.034.226-.032.228-.031.231-.028.234-.027.236-.024.238-.023.241-.02.243-.019.245-.016.247-.015.249-.012.251-.01.253-.008.255-.005.256-.004.258-.001.258.001zm-9.258 20.499v.01l.001.021.003.021.004.022.005.021.006.022.007.022.009.023.01.022.011.023.012.023.013.023.015.023.016.024.017.023.018.024.019.024.021.024.022.025.023.024.024.025.052.049.056.05.061.051.066.051.07.051.075.051.079.052.084.052.088.052.092.052.097.052.102.051.105.052.11.052.114.051.119.051.123.051.127.05.131.05.135.05.139.048.144.049.147.047.152.047.155.047.16.045.163.045.167.043.171.043.176.041.178.041.183.039.187.039.19.037.194.035.197.035.202.033.204.031.209.03.212.029.216.027.219.025.222.024.226.021.23.02.233.018.236.016.24.015.243.012.246.01.249.008.253.005.256.004.259.001.26-.001.257-.004.254-.005.25-.008.247-.011.244-.012.241-.014.237-.016.233-.018.231-.021.226-.021.224-.024.22-.026.216-.027.212-.028.21-.031.205-.031.202-.034.198-.034.194-.036.191-.037.187-.039.183-.04.179-.04.175-.042.172-.043.168-.044.163-.045.16-.046.155-.046.152-.047.148-.048.143-.049.139-.049.136-.05.131-.05.126-.05.123-.051.118-.052.114-.051.11-.052.106-.052.101-.052.096-.052.092-.052.088-.053.083-.051.079-.052.074-.052.07-.051.065-.051.06-.051.056-.05.051-.05.023-.024.023-.025.021-.024.02-.024.019-.024.018-.024.017-.024.015-.023.014-.024.013-.023.012-.023.01-.023.01-.022.008-.022.006-.022.006-.022.004-.022.004-.021.001-.021.001-.021v-4.127l-.077.055-.08.053-.083.054-.085.053-.087.052-.09.052-.093.051-.095.05-.097.05-.1.049-.102.049-.105.048-.106.047-.109.047-.111.046-.114.045-.115.045-.118.044-.12.043-.122.042-.124.042-.126.041-.128.04-.13.04-.132.038-.134.038-.135.037-.138.037-.139.035-.142.035-.143.034-.144.033-.147.032-.148.031-.15.03-.151.03-.153.029-.154.027-.156.027-.158.026-.159.025-.161.024-.162.023-.163.022-.165.021-.166.02-.167.019-.169.018-.169.017-.171.016-.173.015-.173.014-.175.013-.175.012-.177.011-.178.01-.179.008-.179.008-.181.006-.182.005-.182.004-.184.003-.184.002h-.37l-.184-.002-.184-.003-.182-.004-.182-.005-.181-.006-.179-.008-.179-.008-.178-.01-.176-.011-.176-.012-.175-.013-.173-.014-.172-.015-.171-.016-.17-.017-.169-.018-.167-.019-.166-.02-.165-.021-.163-.022-.162-.023-.161-.024-.159-.025-.157-.026-.156-.027-.155-.027-.153-.029-.151-.03-.15-.03-.148-.031-.146-.032-.145-.033-.143-.034-.141-.035-.14-.035-.137-.037-.136-.037-.134-.038-.132-.038-.13-.04-.128-.04-.126-.041-.124-.042-.122-.042-.12-.044-.117-.043-.116-.045-.113-.045-.112-.046-.109-.047-.106-.047-.105-.048-.102-.049-.1-.049-.097-.05-.095-.05-.093-.052-.09-.051-.087-.052-.085-.053-.083-.054-.08-.054-.077-.054v4.127zm0-5.654v.011l.001.021.003.021.004.021.005.022.006.022.007.022.009.022.01.022.011.023.012.023.013.023.015.024.016.023.017.024.018.024.019.024.021.024.022.024.023.025.024.024.052.05.056.05.061.05.066.051.07.051.075.052.079.051.084.052.088.052.092.052.097.052.102.052.105.052.11.051.114.051.119.052.123.05.127.051.131.05.135.049.139.049.144.048.147.048.152.047.155.046.16.045.163.045.167.044.171.042.176.042.178.04.183.04.187.038.19.037.194.036.197.034.202.033.204.032.209.03.212.028.216.027.219.025.222.024.226.022.23.02.233.018.236.016.24.014.243.012.246.01.249.008.253.006.256.003.259.001.26-.001.257-.003.254-.006.25-.008.247-.01.244-.012.241-.015.237-.016.233-.018.231-.02.226-.022.224-.024.22-.025.216-.027.212-.029.21-.03.205-.032.202-.033.198-.035.194-.036.191-.037.187-.039.183-.039.179-.041.175-.042.172-.043.168-.044.163-.045.16-.045.155-.047.152-.047.148-.048.143-.048.139-.05.136-.049.131-.05.126-.051.123-.051.118-.051.114-.052.11-.052.106-.052.101-.052.096-.052.092-.052.088-.052.083-.052.079-.052.074-.051.07-.052.065-.051.06-.05.056-.051.051-.049.023-.025.023-.024.021-.025.02-.024.019-.024.018-.024.017-.024.015-.023.014-.023.013-.024.012-.022.01-.023.01-.023.008-.022.006-.022.006-.022.004-.021.004-.022.001-.021.001-.021v-4.139l-.077.054-.08.054-.083.054-.085.052-.087.053-.09.051-.093.051-.095.051-.097.05-.1.049-.102.049-.105.048-.106.047-.109.047-.111.046-.114.045-.115.044-.118.044-.12.044-.122.042-.124.042-.126.041-.128.04-.13.039-.132.039-.134.038-.135.037-.138.036-.139.036-.142.035-.143.033-.144.033-.147.033-.148.031-.15.03-.151.03-.153.028-.154.028-.156.027-.158.026-.159.025-.161.024-.162.023-.163.022-.165.021-.166.02-.167.019-.169.018-.169.017-.171.016-.173.015-.173.014-.175.013-.175.012-.177.011-.178.009-.179.009-.179.007-.181.007-.182.005-.182.004-.184.003-.184.002h-.37l-.184-.002-.184-.003-.182-.004-.182-.005-.181-.007-.179-.007-.179-.009-.178-.009-.176-.011-.176-.012-.175-.013-.173-.014-.172-.015-.171-.016-.17-.017-.169-.018-.167-.019-.166-.02-.165-.021-.163-.022-.162-.023-.161-.024-.159-.025-.157-.026-.156-.027-.155-.028-.153-.028-.151-.03-.15-.03-.148-.031-.146-.033-.145-.033-.143-.033-.141-.035-.14-.036-.137-.036-.136-.037-.134-.038-.132-.039-.13-.039-.128-.04-.126-.041-.124-.042-.122-.043-.12-.043-.117-.044-.116-.044-.113-.046-.112-.046-.109-.046-.106-.047-.105-.048-.102-.049-.1-.049-.097-.05-.095-.051-.093-.051-.09-.051-.087-.053-.085-.052-.083-.054-.08-.054-.077-.054v4.139zm0-5.666v.011l.001.02.003.022.004.021.005.022.006.021.007.022.009.023.01.022.011.023.012.023.013.023.015.023.016.024.017.024.018.023.019.024.021.025.022.024.023.024.024.025.052.05.056.05.061.05.066.051.07.051.075.052.079.051.084.052.088.052.092.052.097.052.102.052.105.051.11.052.114.051.119.051.123.051.127.05.131.05.135.05.139.049.144.048.147.048.152.047.155.046.16.045.163.045.167.043.171.043.176.042.178.04.183.04.187.038.19.037.194.036.197.034.202.033.204.032.209.03.212.028.216.027.219.025.222.024.226.021.23.02.233.018.236.017.24.014.243.012.246.01.249.008.253.006.256.003.259.001.26-.001.257-.003.254-.006.25-.008.247-.01.244-.013.241-.014.237-.016.233-.018.231-.02.226-.022.224-.024.22-.025.216-.027.212-.029.21-.03.205-.032.202-.033.198-.035.194-.036.191-.037.187-.039.183-.039.179-.041.175-.042.172-.043.168-.044.163-.045.16-.045.155-.047.152-.047.148-.048.143-.049.139-.049.136-.049.131-.051.126-.05.123-.051.118-.052.114-.051.11-.052.106-.052.101-.052.096-.052.092-.052.088-.052.083-.052.079-.052.074-.052.07-.051.065-.051.06-.051.056-.05.051-.049.023-.025.023-.025.021-.024.02-.024.019-.024.018-.024.017-.024.015-.023.014-.024.013-.023.012-.023.01-.022.01-.023.008-.022.006-.022.006-.022.004-.022.004-.021.001-.021.001-.021v-4.153l-.077.054-.08.054-.083.053-.085.053-.087.053-.09.051-.093.051-.095.051-.097.05-.1.049-.102.048-.105.048-.106.048-.109.046-.111.046-.114.046-.115.044-.118.044-.12.043-.122.043-.124.042-.126.041-.128.04-.13.039-.132.039-.134.038-.135.037-.138.036-.139.036-.142.034-.143.034-.144.033-.147.032-.148.032-.15.03-.151.03-.153.028-.154.028-.156.027-.158.026-.159.024-.161.024-.162.023-.163.023-.165.021-.166.02-.167.019-.169.018-.169.017-.171.016-.173.015-.173.014-.175.013-.175.012-.177.01-.178.01-.179.009-.179.007-.181.006-.182.006-.182.004-.184.003-.184.001-.185.001-.185-.001-.184-.001-.184-.003-.182-.004-.182-.006-.181-.006-.179-.007-.179-.009-.178-.01-.176-.01-.176-.012-.175-.013-.173-.014-.172-.015-.171-.016-.17-.017-.169-.018-.167-.019-.166-.02-.165-.021-.163-.023-.162-.023-.161-.024-.159-.024-.157-.026-.156-.027-.155-.028-.153-.028-.151-.03-.15-.03-.148-.032-.146-.032-.145-.033-.143-.034-.141-.034-.14-.036-.137-.036-.136-.037-.134-.038-.132-.039-.13-.039-.128-.041-.126-.041-.124-.041-.122-.043-.12-.043-.117-.044-.116-.044-.113-.046-.112-.046-.109-.046-.106-.048-.105-.048-.102-.048-.1-.05-.097-.049-.095-.051-.093-.051-.09-.052-.087-.052-.085-.053-.083-.053-.08-.054-.077-.054v4.153zm8.74-8.179l-.257.004-.254.005-.25.008-.247.011-.244.012-.241.014-.237.016-.233.018-.231.021-.226.022-.224.023-.22.026-.216.027-.212.028-.21.031-.205.032-.202.033-.198.034-.194.036-.191.038-.187.038-.183.04-.179.041-.175.042-.172.043-.168.043-.163.045-.16.046-.155.046-.152.048-.148.048-.143.048-.139.049-.136.05-.131.05-.126.051-.123.051-.118.051-.114.052-.11.052-.106.052-.101.052-.096.052-.092.052-.088.052-.083.052-.079.052-.074.051-.07.052-.065.051-.06.05-.056.05-.051.05-.023.025-.023.024-.021.024-.02.025-.019.024-.018.024-.017.023-.015.024-.014.023-.013.023-.012.023-.01.023-.01.022-.008.022-.006.023-.006.021-.004.022-.004.021-.001.021-.001.021.001.021.001.021.004.021.004.022.006.021.006.023.008.022.01.022.01.023.012.023.013.023.014.023.015.024.017.023.018.024.019.024.02.025.021.024.023.024.023.025.051.05.056.05.06.05.065.051.07.052.074.051.079.052.083.052.088.052.092.052.096.052.101.052.106.052.11.052.114.052.118.051.123.051.126.051.131.05.136.05.139.049.143.048.148.048.152.048.155.046.16.046.163.045.168.043.172.043.175.042.179.041.183.04.187.038.191.038.194.036.198.034.202.033.205.032.21.031.212.028.216.027.22.026.224.023.226.022.231.021.233.018.237.016.241.014.244.012.247.011.25.008.254.005.257.004.26.001.26-.001.257-.004.254-.005.25-.008.247-.011.244-.012.241-.014.237-.016.233-.018.231-.021.226-.022.224-.023.22-.026.216-.027.212-.028.21-.031.205-.032.202-.033.198-.034.194-.036.191-.038.187-.038.183-.04.179-.041.175-.042.172-.043.168-.043.163-.045.16-.046.155-.046.152-.048.148-.048.143-.048.139-.049.136-.05.131-.05.126-.051.123-.051.118-.051.114-.052.11-.052.106-.052.101-.052.096-.052.092-.052.088-.052.083-.052.079-.052.074-.051.07-.052.065-.051.06-.05.056-.05.051-.05.023-.025.023-.024.021-.024.02-.025.019-.024.018-.024.017-.023.015-.024.014-.023.013-.023.012-.023.01-.023.01-.022.008-.022.006-.023.006-.021.004-.022.004-.021.001-.021.001-.021-.001-.021-.001-.021-.004-.021-.004-.022-.006-.021-.006-.023-.008-.022-.01-.022-.01-.023-.012-.023-.013-.023-.014-.023-.015-.024-.017-.023-.018-.024-.019-.024-.02-.025-.021-.024-.023-.024-.023-.025-.051-.05-.056-.05-.06-.05-.065-.051-.07-.052-.074-.051-.079-.052-.083-.052-.088-.052-.092-.052-.096-.052-.101-.052-.106-.052-.11-.052-.114-.052-.118-.051-.123-.051-.126-.051-.131-.05-.136-.05-.139-.049-.143-.048-.148-.048-.152-.048-.155-.046-.16-.046-.163-.045-.168-.043-.172-.043-.175-.042-.179-.041-.183-.04-.187-.038-.191-.038-.194-.036-.198-.034-.202-.033-.205-.032-.21-.031-.212-.028-.216-.027-.22-.026-.224-.023-.226-.022-.231-.021-.233-.018-.237-.016-.241-.014-.244-.012-.247-.011-.25-.008-.254-.005-.257-.004-.26-.001-.26.001z" transform="scale(.5)"></path></symbol></defs><defs><symbol height="24" width="24" id="clock"><path d="M12 2c5.514 0 10 4.486 10 10s-4.486 10-10 10-10-4.486-10-10 4.486-10 10-10zm0-2c-6.627 0-12 5.373-12 12s5.373 12 12 12 12-5.373 12-12-5.373-12-12-12zm5.848 12.459c.202.038.202.333.001.372-1.907.361-6.045 1.111-6.547 1.111-.719 0-1.301-.582-1.301-1.301 0-.512.77-5.447 1.125-7.445.034-.192.312-.181.343.014l.985 6.238 5.394 1.011z" transform="scale(.5)"></path></symbol></defs><defs><marker orient="auto" markerHeight="12" markerWidth="12" markerUnits="userSpaceOnUse" refY="5" refX="7.9" id="arrowhead"><path d="M 0 0 L 10 5 L 0 10 z"></path></marker></defs><defs><marker refY="4.5" refX="4" orient="auto" markerHeight="8" markerWidth="15" id="crosshead"><path style="stroke: var(--muted); stroke-dasharray: 0, 0;" d="M 1,2 L 6,7 M 6,2 L 1,7" stroke-width="1pt" fill="none"></path></marker></defs><defs><marker orient="auto" markerHeight="28" markerWidth="20" refY="7" refX="15.5" id="filled-head"><path d="M 18,7 L9,13 L14,7 L9,1 Z"></path></marker></defs><defs><marker orient="auto" markerHeight="40" markerWidth="60" refY="15" refX="15" id="sequencenumber"><circle r="6" cy="15" cx="15"></circle></marker></defs><g><rect class="note" ry="0" rx="0" height="39" width="598" y="528" x="375" style="stroke: var(--line); fill: var(--bg)"></rect><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="noteText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="533" x="674"><tspan x="674">délai délibéré</tspan></text></g><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="80" x="122">touche</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="99" x="122">d'un leurre</text><line style="fill: none;" marker-start="url(#sequencenumber)" marker-end="url(#arrowhead)" stroke="none" stroke-width="2" class="messageLine0" y2="130" x2="194" y1="130" x1="49"></line><text class="sequenceNumber" text-anchor="middle" font-size="12px" font-family="sans-serif" y="134" x="49">1</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="145" x="291">alerte à</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="164" x="291">haute confiance</text><line style="fill: none;" marker-start="url(#sequencenumber)" marker-end="url(#arrowhead)" stroke="none" stroke-width="2" class="messageLine0" y2="195" x2="383" y1="195" x1="199"></line><text class="sequenceNumber" text-anchor="middle" font-size="12px" font-family="sans-serif" y="199" x="199">2</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="210" x="475">quarantaine</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="229" x="475">(réversible)</text><line style="fill: none;" marker-start="url(#sequencenumber)" marker-end="url(#arrowhead)" stroke="none" stroke-width="2" class="messageLine0" y2="260" x2="562" y1="260" x1="388"></line><text class="sequenceNumber" text-anchor="middle" font-size="12px" font-family="sans-serif" y="264" x="388">3</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="275" x="548">sortie coupée</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="294" x="548">(réversible)</text><line style="fill: none;" marker-start="url(#sequencenumber)" marker-end="url(#arrowhead)" stroke="none" stroke-width="2" class="messageLine0" y2="325" x2="707" y1="325" x1="388"></line><text class="sequenceNumber" text-anchor="middle" font-size="12px" font-family="sans-serif" y="329" x="388">4</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="340" x="613">sessions révoquées</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="359" x="613">(réversible)</text><line style="fill: none;" marker-start="url(#sequencenumber)" marker-end="url(#arrowhead)" stroke="none" stroke-width="2" class="messageLine0" y2="390" x2="837" y1="390" x1="388"></line><text class="sequenceNumber" text-anchor="middle" font-size="12px" font-family="sans-serif" y="394" x="388">5</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="405" x="673">demande de scellement</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="424" x="673">(hors bande)</text><line style="stroke-dasharray: 3, 3; fill: none;" marker-start="url(#sequencenumber)" marker-end="url(#arrowhead)" stroke="none" stroke-width="2" class="messageLine1" y2="455" x2="957" y1="455" x1="388"></line><text class="sequenceNumber" text-anchor="middle" font-size="12px" font-family="sans-serif" y="459" x="388">6</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="470" x="676">m approbations</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="489" x="676">signées</text><line style="fill: none;" marker-start="url(#sequencenumber)" marker-end="url(#arrowhead)" stroke="none" stroke-width="2" class="messageLine0" y2="520" x2="391" y1="520" x1="960"></line><text class="sequenceNumber" text-anchor="middle" font-size="12px" font-family="sans-serif" y="524" x="960">7</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="582" x="475">scellement</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="601" x="475">(irréversible)</text><line style="fill: none;" marker-start="url(#sequencenumber)" marker-end="url(#arrowhead)" stroke="none" stroke-width="2" class="messageLine0" y2="632" x2="562" y1="632" x1="388"></line><text class="sequenceNumber" text-anchor="middle" font-size="12px" font-family="sans-serif" y="636" x="388">8</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="647" x="294">décisions</text><text style="font-family: &quot;IBM Plex Mono&quot;, Menlo, Consolas, monospace; font-size: 16px; font-weight: 400;" dy="1em" class="messageText" alignment-baseline="middle" dominant-baseline="middle" text-anchor="middle" y="666" x="294">journalisées</text><line style="fill: none;" marker-start="url(#sequencenumber)" marker-end="url(#arrowhead)" stroke="none" stroke-width="2" class="messageLine0" y2="697" x2="202" y1="697" x1="386"></line><text class="sequenceNumber" text-anchor="middle" font-size="12px" font-family="sans-serif" y="701" x="386">9</text></svg></figure>
+<p>Les gestes 3 à 5 partent en secondes, sans attendre qu’un humain confirme : ils se défont si la touche était un exercice ou une erreur. Le geste 8 attend plusieurs personnes et un délai, parce qu’il ne se défait pas. Si personne ne répond, l’isolement reste en place : la main morte joue en faveur du réversible.</p>
+<h3 id="52-une-exposition-apparaît"><span class="num">5.2</span> Une exposition apparaît</h3>
+<p>Le Miroir détecte un service d’administration exposé sur Internet, ou un actif exposé qui porte une vulnérabilité du catalogue KEV. La règle « exposition = incident » ouvre un incident à la Salle, avec un propriétaire tiré de l’inventaire et un délai. La Salle peut couper l’exposition à la Passerelle (réversible) sans attendre le propriétaire. La Veille ouvre une hypothèse : si l’exposition date de plus de quelques heures, quelqu’un l’a déjà vue, et il faut chercher ce qu’il en a fait. L’écart entre inventaire déclaré et observé remonte au Registre.</p>
+<h3 id="53-lancre-didentité-tombe"><span class="num">5.3</span> L’ancre d’identité tombe</h3>
+<p>C’est le scénario que la plupart des plans de réponse ne savent pas jouer, parce qu’ils supposent l’annuaire disponible pour organiser la riposte. Ici, la Salle, le Coffre et l’Arche ont leur propre ancre (R1) : les répondants se connectent avec des identités qui n’existent pas en production, sur le canal hors bande. Les décisions irréversibles (reconstruire l’annuaire, révoquer l’autorité de certification interne) passent par le quorum de la Salle. La reconstruction part de l’Arche, dans la salle blanche, et non d’une sauvegarde administrée depuis l’annuaire compromis.</p>
+<h3 id="54-un-incident-est-qualifié"><span class="num">5.4</span> Un incident est qualifié</h3>
+<p>La Salle qualifie l’incident ; le Relais déclenche les horloges réglementaires et prépare le partage. Les indicateurs techniques partent vers le CERT sectoriel en TLP:AMBER, les éléments de contexte vers les pairs en TLP:GREEN une fois l’incident maîtrisé. Les empreintes publiées du Coffre permettent à un tiers de vérifier que la chronologie communiquée n’a pas été réécrite. Le renseignement reçu en retour alimente la Veille.</p>
+<hr />
+<h2 id="6-le-modèle-de-menace-de-larchitecture"><span class="num">6</span> Le modèle de menace de l’architecture</h2>
+<p>Une architecture de sécurité qui concentre les preuves, les clés et les décisions crée de nouvelles cibles. L’ignorer serait répéter l’erreur du Bunker : construire contre l’arme d’hier sans voir que l’abri lui-même est devenu un objectif.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr class="header">
+<th>Cible</th>
+<th>Ce que gagne l’attaquant</th>
+<th>Défense dans l’architecture</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Salle du Porte-épée</td>
+<td>désactiver les automatismes, déclencher un isolement destructeur</td>
+<td>identités propres (R1) ; désactivation d’un automatisme à quorum ; scellement à quorum avec délai ; journal au Coffre</td>
+</tr>
+<tr class="even">
+<td>Registre des contrôles</td>
+<td>publier une politique qui ouvre la sortie ou l’admission</td>
+<td>quorum sur les lois et l’irréversible ; politiques signées ; versions horodatées au Coffre ; écart observé/déclaré remonté par le Miroir</td>
+</tr>
+<tr class="odd">
+<td>Coffre de preuve</td>
+<td>effacer ses traces</td>
+<td>écriture seule depuis la production ; rétention en mode conformité ; empreintes publiées hors du compte</td>
+</tr>
+<tr class="even">
+<td>Forêt de leurres</td>
+<td>connaître les leurres pour les éviter</td>
+<td>liste hors de la production ; équipe restreinte ; renouvellement</td>
+</tr>
+<tr class="odd">
+<td>Ancre d’identité</td>
+<td>toute la flotte</td>
+<td>seconde ancre pour les plans hors de portée ; clés racines en module matériel à quorum ; plan de compromission exercé</td>
+</tr>
+<tr class="even">
+<td>Chaîne de fabrication</td>
+<td>signer un artefact piégé</td>
+<td>clés hors de portée des administrateurs de la chaîne ; provenance des entrées ; surveillance après admission</td>
+</tr>
+<tr class="odd">
+<td>Éditeur d’un outil de sécurité</td>
+<td>canal de sortie et d’exécution privilégié</td>
+<td>sortie par la Passerelle (R5) ; hétérogénéité (R8) ; mises à jour admises comme tout artefact</td>
+</tr>
+<tr class="even">
+<td>Les approbateurs</td>
+<td>contraindre ou tromper m personnes</td>
+<td>m choisi selon l’erreur redoutée ; approbateurs répartis (lieux, hiérarchies) ; délai délibéré qui laisse le temps de s’opposer</td>
+</tr>
+</tbody>
+</table></div>
+<p>Le quorum n’est pas une protection contre tout. Si les m approbateurs collaborent, ou sont trompés ensemble par un même faux récit, il signe ce qu’on lui présente. C’est pour cela que la demande décrit l’action exacte (action, cible, motif, demandeur) et que la signature porte sur cette description : on peut tromper des approbateurs sur le contexte, pas sur l’objet de ce qu’ils signent.</p>
+<hr />
+<h2 id="7-correspondance-entre-principes-et-applications"><span class="num">7</span> Correspondance entre principes et applications</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr class="header">
+<th>Principe</th>
+<th>Application principale</th>
+<th>Applications d’appui</th>
+<th>Indicateur de tête (grille 5.1)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>3.1 Ce qui sort</td>
+<td>Passerelle de sortie</td>
+<td>agents d’hôte, Salle</td>
+<td>part des flux sortants via mandataire</td>
+</tr>
+<tr class="even">
+<td>3.2 Une loi, une preuve</td>
+<td>Registre des contrôles</td>
+<td>Coffre, Arche, Chaîne</td>
+<td>contrôles critiques résistant à un administrateur compromis</td>
+</tr>
+<tr class="odd">
+<td>3.3 Toute émission est une coordonnée</td>
+<td>Miroir</td>
+<td>Passerelle, Ancre (CT)</td>
+<td>temps avant premier balayage d’un hôte neuf</td>
+</tr>
+<tr class="even">
+<td>3.4 Une émission ne se rappelle pas</td>
+<td>Ancre d’identité</td>
+<td>Chaîne (secrets)</td>
+<td>âge des secrets statiques</td>
+</tr>
+<tr class="odd">
+<td>3.5 La réponse est l’information</td>
+<td>Chaîne de fabrication (banc d’oracles)</td>
+<td>Passerelle (abandon silencieux)</td>
+<td>résultats des tests d’énumération</td>
+</tr>
+<tr class="even">
+<td>3.6 Le sortilège</td>
+<td>Forêt de leurres</td>
+<td>Salle</td>
+<td>délai touche → prise en compte</td>
+</tr>
+<tr class="odd">
+<td>3.7 Sous les intellectrons</td>
+<td>Coffre de preuve</td>
+<td>Salle (hors bande), Passerelle</td>
+<td>trous de télémétrie détectés</td>
+</tr>
+<tr class="even">
+<td>3.8 La clé n’est pas une personne</td>
+<td>Salle du Porte-épée</td>
+<td>Registre, Ancre (quorum des clés)</td>
+<td>degré d’exécution ; rôles à titulaire unique</td>
+</tr>
+<tr class="odd">
+<td>3.9 Le Bunker</td>
+<td>Registre des contrôles</td>
+<td>Veille, Arche</td>
+<td>classes d’effet sans contrôle par propriété</td>
+</tr>
+<tr class="even">
+<td>3.10 Deux siècles sans défaite</td>
+<td>Veille active</td>
+<td>Miroir, Registre (revues)</td>
+<td>délai d’atténuation des KEV ; détection en exercice</td>
+</tr>
+<tr class="odd">
+<td>3.11 Ne masse pas la flotte</td>
+<td>Arche</td>
+<td>Ancre (niveaux), Salle</td>
+<td>restauration du cœur chronométrée</td>
+</tr>
+<tr class="even">
+<td>3.12 La chaîne se déplace</td>
+<td>Ancre d’identité</td>
+<td>Chaîne, Relais</td>
+<td>accès sous MFA résistante à l’hameçonnage</td>
+</tr>
+<tr class="odd">
+<td>3.13 Le milieu</td>
+<td>Relais de coopération</td>
+<td>Miroir, Registre (cicatrices)</td>
+<td>DNS sans cible vivante ; indicateurs vérifiables de l’extérieur</td>
+</tr>
+</tbody>
+</table></div>
+<p>Aucun principe ne repose sur une seule application, et aucune application ne porte un seul principe : c’est le signe que le découpage suit des fonctions et non des slogans.</p>
+<hr />
+<h2 id="8-feuille-de-route"><span class="num">8</span> Feuille de route</h2>
+<p>L’essai le dit en 5.3 : commencer par l’enclave est l’erreur du Bunker. La feuille de route suit donc l’ordre inverse de l’élégance.</p>
+<p><strong>Phase 0. L’hygiène.</strong> Le guide d’hygiène informatique de l’ANSSI (quarante-deux mesures) reste le point de départ : inventaire, mises à jour, comptes nominatifs, sauvegardes, cloisonnement minimal. Sans lui, les applications suivantes protègent un système qu’on ne connaît pas.</p>
+<p><strong>Phase 1. Les quatre socles.</strong> Quatre contrôles servent chacun plusieurs principes et coûtent peu au regard de ce qu’ils périment ; ils appellent une version minimale de cinq applications.</p>
+<ol type="1">
+<li>Sortie interdite par défaut et DNS protecteur : la Passerelle de sortie, en commençant par les serveurs et les postes d’administration.</li>
+<li>Journaux et copie des fonctions vitales hors de portée des identités de production, restaurés une fois dans l’année : un Coffre de preuve minimal (un compte distinct, la rétention en mode conformité) et une Arche minimale (une copie hors ligne, une restauration chronométrée).</li>
+<li>Authentification résistante à l’hameçonnage sur tout accès distant et administratif : l’Ancre d’identité.</li>
+<li>Autorité d’isolement pré-déléguée par écrit, chronométrée en exercice : une Salle du Porte-épée réduite à une procédure, un bouton d’isolement et un canal hors bande.</li>
+</ol>
+<p>Le Relais de coopération existe dès cette phase sous sa forme minimale, parce que la loi l’impose : qui notifie, dans quels délais, par quel canal.</p>
+<p><strong>Phase 2. La mesure.</strong> Le Miroir (inventaire externe continu, CT, KEV), la Forêt de leurres (quelques identifiants leurres bien placés valent mieux qu’un parc de pots de miel), la Veille active (un carnet d’hypothèses, un exercice par trimestre). C’est aussi la phase où le Registre des contrôles devient la source des politiques, et où le Tableau de bord commence à afficher la grille.</p>
+<p><strong>Phase 3. Les contrôles par propriété.</strong> Diodes, modules matériels à quorum, provenance signée et admission stricte, enclaves scellables pour les joyaux, quorum devant l’irréversible dans la Salle. Ce sont les contrôles les plus coûteux et les plus partiels ; ils sont réservés aux fonctions dont on a écrit l’hypothèse de menace au Registre.</p>
+<p>À chaque phase, les indicateurs de soutenabilité accompagnent les indicateurs de protection. Une phase qui fait monter le taux de contournement n’est pas terminée.</p>
+<hr />
+<h2 id="9-le-squelette-de-code"><span class="num">9</span> Le squelette de code</h2>
+<p>Deux des onze applications ont reçu un premier squelette dans ce dépôt, parce que ce sont celles qui relèvent le moins de l’assemblage de produits existants : la logique du Registre et celle du quorum de la Salle. Les deux s’appuient sur les primitives de BDOS (<code>bdos/core/crypto.py</code> pour Ed25519, <code>bdos/core/events.py</code> pour le journal chaîné, <code>bdos/core/config.py</code> pour le chargement TOML) et ne dépendent que de la bibliothèque standard et de <code>cryptography</code>.</p>
+<h3 id="91-le-registre-des-contrôles--bdosregistry"><span class="num">9.1</span> Le Registre des contrôles : <code>bdos/registry/</code></h3>
+<p>Un registre est un fichier TOML de contrôles. L’exemple <code>os/etc/bdos/controls.toml</code> en contient treize, un par principe, dont deux portent un défaut volontaire.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode toml"><code class="sourceCode toml"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="kw">[[control]]</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="dt">id</span> <span class="op">=</span> <span class="st">&quot;C-3.9-backup-diode&quot;</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="dt">principle</span> <span class="op">=</span> <span class="st">&quot;3.9&quot;</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="dt">title</span> <span class="op">=</span> <span class="st">&quot;Copie des fonctions vitales poussée à travers une diode vers un site sans retour&quot;</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="dt">kind</span> <span class="op">=</span> <span class="st">&quot;loi&quot;</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="dt">scar</span> <span class="op">=</span> <span class="st">&quot;Sauvegardes supprimées depuis la console d&#39;administration compromise&quot;</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="dt">threat_hypothesis</span> <span class="op">=</span> <span class="st">&quot;Toute arme capable d&#39;atteindre le plan d&#39;administration, connue ou non&quot;</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="dt">effect_class</span> <span class="op">=</span> <span class="st">&quot;destruction&quot;</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="dt">property_based</span> <span class="op">=</span> <span class="cn">true</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="dt">lifted_by</span> <span class="op">=</span> <span class="op">[]</span></span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="dt">resists_compromised_admin</span> <span class="op">=</span> <span class="cn">true</span></span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="dt">third_party_check</span> <span class="op">=</span> <span class="st">&quot;Inspection physique de la diode ; restauration annuelle constatée par l&#39;audit&quot;</span></span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a><span class="dt">reversible</span> <span class="op">=</span> <span class="cn">false</span></span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a><span class="dt">indicator</span> <span class="op">=</span> <span class="st">&quot;Durée chronométrée de restauration du cœur&quot;</span></span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a><span class="dt">owner</span> <span class="op">=</span> <span class="st">&quot;plateforme&quot;</span></span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a><span class="dt">review_by</span> <span class="op">=</span> <span class="bn">2027-06-30</span></span></code></pre></div>
+<p><code>bdosctl registry check</code> applique les règles de l’essai et sort avec le code 3 à la moindre erreur, ce qui permet de l’utiliser comme garde-fou en intégration continue :</p>
+<ul>
+<li>une « loi » qu’un administrateur compromis peut lever, ou qu’aucun tiers ne peut vérifier, est refusée (3.2) ;</li>
+<li>un contrôle sans cicatrice ou sans hypothèse de menace est refusé (3.13, 3.9) ;</li>
+<li>un contrôle irréversible qu’un seul rôle peut lever est refusé, de même qu’une exception sur un tel contrôle approuvée par moins de deux personnes (3.8) ;</li>
+<li>une exception sans date d’expiration ou expirée est refusée, une revue échue est signalée (3.10).</li>
+</ul>
+<p><code>bdosctl registry coverage</code> donne la vue d’ensemble : principes sans contrôle, classes d’effet défendues seulement par la reconnaissance de l’arme (le Bunker contre le photoïde), exceptions actives et leur âge.</p>
+<pre><code>$ bdosctl registry check os/etc/bdos/controls.toml --today 2026-10-20
+ERROR   C-3.5-uniform-errors   [3.10] exception &#39;EX-legacy-portal&#39; expired on 2026-09-30
+ERROR   C-3.8-seal-enclave     [3.8] irreversible, yet a single role (&#39;astreinte&#39;) can lift it
+13 controls, 2 errors, 0 warnings
+
+$ bdosctl registry coverage os/etc/bdos/controls.toml --today 2026-10-20
+controls            : 13 (2 laws)
+principles uncovered: (none)
+detection-only      : exploitation
+active exceptions   : 0</code></pre>
+<h3 id="92-le-quorum-de-la-salle--bdosquorum"><span class="num">9.2</span> Le quorum de la Salle : <code>bdos/quorum/</code></h3>
+<p>Une demande (<code>ActionRequest</code>) décrit l’action exacte : action, cible, motif, demandeur, date de création, nonce. Chaque approbateur signe l’empreinte de cette demande avec sa propre clé Ed25519 (<code>Approval</code>). La porte (<code>QuorumGate</code>) ne laisse passer que si :</p>
+<ul>
+<li>au moins m approbateurs distincts et inscrits ont signé la même demande, avec des signatures valides ;</li>
+<li>la demande est encore dans sa fenêtre de validité ;</li>
+<li>le délai délibéré s’est écoulé depuis la m-ième approbation, c’est-à-dire depuis le moment où le quorum a été atteint ;</li>
+<li>la demande n’a pas déjà été exécutée.</li>
+</ul>
+<p>La configuration refuse un quorum d’une seule personne (m &lt; 2), un quorum plus grand que le nombre d’approbateurs inscrits, et deux sièges qui partagent la même clé.</p>
+<p>Quand <code>quorum.seal_requires_quorum</code> est activé, deux choses changent dans BDOS. <code>bdosctl seal</code> exige la demande et les approbations, et journalise le refus ou l’acceptation. Le Sentinel garde la quarantaine automatique, réversible, mais ne fait plus que recommander le scellement, irréversible, avec la mention <code>requires_quorum</code>. C’est R3 appliquée à l’échelle d’un hôte.</p>
+<pre><code>bdosctl keygen --out alice.key                     # chaque approbateur, sur son propre poste
+bdosctl quorum request --target crown-jewels --reason &quot;jeton leurre touché sur svc-db&quot; \
+        --requested-by soc-1 --out req.json
+bdosctl quorum approve --request req.json --approver alice --key alice.key --out alice.json
+bdosctl quorum approve --request req.json --approver bob   --key bob.key   --out bob.json
+bdosctl seal crown-jewels --config bdos.toml --request req.json \
+        --approval alice.json --approval bob.json  # refusé avant le délai, accepté après</code></pre>
+<h3 id="93-ce-que-le-squelette-ne-fait-pas-encore"><span class="num">9.3</span> Ce que le squelette ne fait pas encore</h3>
+<ul>
+<li>L’ensemble des demandes exécutées est propre au processus, comme le cache de rejeu des jetons de BDOS : un déploiement à plusieurs instances a besoin d’un stockage partagé, idéalement dans le Coffre.</li>
+<li>Le scellement n’est pas exposé par le socket du démon ; <code>bdosctl seal</code> reste une démonstration en mémoire, comme avant.</li>
+<li>Le Registre vérifie la cohérence de ce qu’on déclare, pas la vérité de ce qu’on déclare : il faut le croiser avec l’observé (Miroir, Coffre) pour qu’une « loi » déclarée soit une loi constatée.</li>
+<li>Il n’y a pas encore de publication de politiques signées par le Registre vers les points d’application, ni de veto pendant le délai délibéré. Ce sont les deux prochaines étapes naturelles.</li>
+</ul>
+<hr />
+<h2 id="10-limites-et-refus"><span class="num">10</span> Limites et refus</h2>
+<p>Cette architecture hérite des limites que l’essai reconnaît à l’analogie, et en ajoute une qui lui est propre : elle est grande. Onze applications, cinq plans et un quorum sont hors de portée d’une petite organisation, qui fera mieux de prendre les quatre socles de la phase 1 sous forme de services managés et de s’arrêter là jusqu’à ce que la mesure dise qu’il faut aller plus loin. Une architecture de sécurité qui consomme ce qu’elle protège a déjà perdu.</p>
+<p>Elle refuse aussi ce que l’essai demande de refuser. Elle ne frappe pas : aucune application ne riposte vers l’extérieur, la Salle révèle et confine, elle ne contre-attaque pas. Elle ne fait pas de l’isolement une doctrine : l’irréversible reste réservé aux joyaux, tout le reste se corrige et se met à jour (R6). Elle ne se tait pas envers son propre camp : le Relais est dans la phase 1, pas dans la phase 3. Et elle ne fait pas reposer la décision sur le caractère de celui qui tient l’épée : elle la fait reposer sur une autorisation écrite, des gestes exercés, un quorum et un délai, c’est-à-dire sur la cage de Cheng Xin autour de la capacité de Wade.</p>
+<hr />
+<p><em>Ce document accompagne l’essai <a href="index.html">« Le domaine noir et la cyberdéfense »</a> et le code de BDOS dans ce dépôt (licence MIT). Octobre 2026.</em></p>
+
+  </article>
+</div>
+<footer class="colophon">
+  <p>Texte intégral : <code>docs/architecture-applicative.md</code> dans le dépôt <code>black-domain</code>, licence MIT ; squelette de code dans <code>bdos/registry/</code> et <code>bdos/quorum/</code>. Page générée à partir du Markdown (pandoc), schémas Mermaid. Octobre 2026.</p>
+</footer>
+<script>
+(function () {
+  var details = document.querySelector('.toc details');
+  var mq = window.matchMedia('(min-width: 60rem)');
+  function sync() { if (details) details.open = mq.matches; }
+  sync();
+  if (mq.addEventListener) mq.addEventListener('change', sync);
+  var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+  links.forEach(function (a) { a.addEventListener('click', function () { if (!mq.matches && details) details.open = false; }); });
+  var byId = {};
+  links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+  var heads = Array.prototype.slice.call(document.querySelectorAll('article h2[id], article h3[id]')).filter(function (h) { return byId[h.id]; });
+  if (!('IntersectionObserver' in window) || !heads.length) return;
+  var current = null;
+  function setActive(id) {
+    if (current === id) return;
+    links.forEach(function (a) { a.classList.remove('active'); });
+    if (byId[id]) { byId[id].classList.add('active'); current = id; }
+  }
+  var visible = new Map();
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) { if (e.isIntersecting) visible.set(e.target.id, e.boundingClientRect.top); else visible.delete(e.target.id); });
+    if (visible.size) {
+      var best = null;
+      visible.forEach(function (top, id) { if (best === null || top < visible.get(best)) best = id; });
+      setActive(best);
+    }
+  }, { rootMargin: '-10% 0px -70% 0px', threshold: 0 });
+  heads.forEach(function (h) { io.observe(h); });
+})();
+</script>
+
+</body>
+</html>

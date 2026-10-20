@@ -416,6 +416,42 @@ would take -- would reset all of this state every call and defeat the layer; the
 socket server exists precisely to avoid that.
 
 
+## Quorum and control registry -- the first organisation-level pieces
+
+BDOS is the host-level enforcement point of a wider application architecture,
+described in French in [architecture-applicative.md](architecture-applicative.md)
+(eleven applications on five planes). Two of those applications have a skeleton
+here, because they are glue rather than products one can buy.
+
+**Quorum (`bdos/quorum/`).** The Sentinel's seal used to be one more reflex, and
+`bdosctl seal` one command in one hand. With `quorum.seal_requires_quorum`, an
+irreversible seal needs an `ActionRequest` (action, target, reason, requester,
+creation time, nonce) signed by `m` distinct enrolled approvers, each with their
+own Ed25519 key, under a domain-separated message. `QuorumGate` admits it only
+inside the validity window, only once (replay is refused), and only after a
+deliberate delay counted from the `m`-th approval -- so a hurried decision can
+still be stopped, and backdating it would take the whole quorum lying about its
+own signing times. The config refuses `m < 2`, `m` above the enrolled count, and
+two seats sharing one key. The Sentinel keeps quarantining at machine speed
+(reversible) but only emits `sentinel.recommend_seal` with `requires_quorum`
+(irreversible): automate the reversible, split the irreversible. The default is
+off, so existing behaviour is unchanged.
+
+**Control registry (`bdos/registry/`).** A TOML list of controls, each stating
+the attack it is the scar of, the weapon it assumes, whether it holds by
+property or by detection, who can lift it, whether it is reversible, how a third
+party can check it, its owner, its review date and its dated exceptions.
+`bdosctl registry check` fails (exit 3) on a "law" a compromised admin can lift
+or nobody can verify, an irreversible control in a single role's hand, a missing
+scar or threat hypothesis, an expired or open-ended exception; `coverage` lists
+the principles with no control and the effect classes defended by detection
+only. A sample lives in `os/etc/bdos/controls.toml`.
+
+Both keep BDOS's honest limits: the executed-request set is per-process, the
+seal is not exposed over the daemon socket, and the registry checks what is
+declared, not what is true -- it must be cross-checked against observation.
+
+
 ## BDOS controls mapped to MITRE ATT&CK
 
 Grounded in the real incidents above -- the GTG-1002 machine-speed espionage
