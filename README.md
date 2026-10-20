@@ -147,6 +147,10 @@ construire mais comme une question à poser à chaque système d'information :
   l'essai, une architecture d'applications pour mettre les principes en œuvre
   (cinq plans, onze applications, huit règles, quatre flux, feuille de route),
   avec un premier squelette de code dans `bdos/quorum/` et `bdos/registry/`.
+- [`docs/diagrams/`](docs/diagrams/) : les schémas interactifs de cette
+  architecture (carte des cinq plans, flux « un leurre est touché », feuille de
+  route), produits avec [Archify](https://github.com/tt-a1i/archify) à partir
+  des fichiers de `docs/diagrams/src/`.
 
 ### Plan de l'essai
 

@@ -82,6 +82,8 @@ flowchart TB
   OBS <-. "renseignement" .-> COOP
 ```
 
+*Version interactive, application par application, avec les flux et leurs libellés : [la carte d'architecture dans Archify](diagrams/architecture.html).*
+
 **Le plan de production** est celui où l'adversaire est supposé présent. Il porte les points d'application : la Passerelle de sortie, l'Ancre d'identité de production, la Chaîne de fabrication qui décide de ce qui a le droit de s'exécuter, et les agents d'hôte (BDOS ou équivalents).
 
 **Le plan de preuve** est hors de portée de la production : on y dépose, on n'y relit pas depuis la production. Il garde ce qui doit survivre à une compromission totale : la trace (Coffre de preuve), la capacité de repartir (Arche) et la mémoire des raisons (Registre des contrôles).
@@ -337,6 +339,8 @@ sequenceDiagram
   S->>V: décisions<br/>journalisées
 ```
 
+*Version interactive, avec trace animée, zoom et export : [le flux dans Archify](diagrams/flux-leurre.html).*
+
 Les gestes 3 à 5 partent en secondes, sans attendre qu'un humain confirme : ils se défont si la touche était un exercice ou une erreur. Le geste 8 attend plusieurs personnes et un délai, parce qu'il ne se défait pas. Si personne ne répond, l'isolement reste en place : la main morte joue en faveur du réversible.
 
 ### 5.2 Une exposition apparaît
@@ -396,7 +400,7 @@ Aucun principe ne repose sur une seule application, et aucune application ne por
 
 ## 8. Feuille de route
 
-L'essai le dit en 5.3 : commencer par l'enclave est l'erreur du Bunker. La feuille de route suit donc l'ordre inverse de l'élégance.
+L'essai le dit en 5.3 : commencer par l'enclave est l'erreur du Bunker. La feuille de route suit donc l'ordre inverse de l'élégance. Elle est aussi dessinée [en version interactive dans Archify](diagrams/feuille-de-route.html).
 
 **Phase 0. L'hygiène.** Le guide d'hygiène informatique de l'ANSSI (quarante-deux mesures) reste le point de départ : inventaire, mises à jour, comptes nominatifs, sauvegardes, cloisonnement minimal. Sans lui, les applications suivantes protègent un système qu'on ne connaît pas.
 
@@ -506,4 +510,4 @@ Elle refuse aussi ce que l'essai demande de refuser. Elle ne frappe pas : aucune
 
 ---
 
-*Ce document accompagne l'essai [« Le domaine noir et la cyberdéfense »](domaine-noir-cyberdefense.md) et le code de BDOS dans ce dépôt (licence MIT). Octobre 2026.*
+*Ce document accompagne l'essai [« Le domaine noir et la cyberdéfense »](domaine-noir-cyberdefense.md) et le code de BDOS dans ce dépôt (licence MIT). Les schémas interactifs de `docs/diagrams/` sont produits avec [Archify](https://github.com/tt-a1i/archify) (licence MIT) à partir des fichiers de `docs/diagrams/src/`. Octobre 2026.*
