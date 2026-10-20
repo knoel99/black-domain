@@ -21,11 +21,12 @@ call -- a loop that tightens under sustained attack.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import socketserver
 import threading
-from typing import Optional
+from typing import Iterable, Optional
 
 from bdos.core import crypto
 from bdos.core.clock import Clock, SystemClock
@@ -38,6 +39,7 @@ from bdos.safetynotice import SafetyNotice, SafetyNoticeIssuer, SafetyNoticeVeri
 from bdos.darkforest import Deception, MovingTarget
 from bdos.blackdomain import Enclave, EnclaveRouter, compile_nftables
 from bdos.sentinel import Sentinel
+from bdos.quorum import ActionRequest, Approval, QuorumGate
 
 
 class ControlPlane:
@@ -91,9 +93,17 @@ class ControlPlane:
         self.enclaves = [Enclave(spec) for spec in self.config.blackdomain.enclaves]
         self.router = EnclaveRouter(self.enclaves)
 
+        # -- Quorum: the irreversible needs several hands and some time. --
+        self.quorum = QuorumGate(self.config.quorum, clock=self.clock, log=self.log)
+
         # -- Sentinel: watch the log, hold the sword. ---------------------
+        # When sealing needs a quorum, the Sentinel keeps its reversible reflex
+        # (quarantine) and only recommends the irreversible one.
+        sentinel_cfg = self.config.sentinel
+        if self.config.quorum.seal_requires_quorum:
+            sentinel_cfg = dataclasses.replace(sentinel_cfg, auto_seal=False)
         self.sentinel = Sentinel(
-            self.config.sentinel,
+            sentinel_cfg,
             clock=self.clock,
             throttle=self.throttle,
             enclaves=self.enclaves,
@@ -105,6 +115,54 @@ class ControlPlane:
     def enclave_for(self, member: str) -> Optional[Enclave]:
         """Return the enclave that fences ``member`` in, or ``None``."""
         return self.router.enclave_for(member)
+
+    # -- the one irreversible operator action ----------------------------
+    def seal(
+        self,
+        enclave_id: str,
+        request: Optional[ActionRequest] = None,
+        approvals: Iterable[Approval] = (),
+    ) -> Verdict:
+        """Seal ``enclave_id`` -- through the quorum gate when policy requires it.
+
+        With ``quorum.seal_requires_quorum`` the request must name this exact
+        action (``seal``) and target, and carry enough valid approvals; anything
+        less is denied and logged, and the enclave stays open.
+        """
+        enclave = next((e for e in self.enclaves if e.id == enclave_id), None)
+        if enclave is None:
+            return Verdict.deny(f"no enclave named {enclave_id!r}")
+        if self.config.quorum.seal_requires_quorum:
+            if request is None:
+                verdict = Verdict.deny("sealing requires a quorum-approved request")
+            elif request.action != "seal" or request.target != enclave_id:
+                verdict = Verdict.deny(
+                    f"request is for {request.action!r} on {request.target!r}, not seal on {enclave_id!r}"
+                )
+            else:
+                verdict = self.quorum.authorize(request, approvals)
+            if not verdict.allowed:
+                self.log.append(
+                    Event(
+                        ts=self.clock.wall(),
+                        kind="blackdomain.seal_refused",
+                        severity=Severity.WARNING,
+                        message=f"seal of {enclave_id!r} refused: {verdict.reason}",
+                        data={"enclave": enclave_id},
+                    )
+                )
+                return verdict
+        enclave.seal()
+        self.log.append(
+            Event(
+                ts=self.clock.wall(),
+                kind="blackdomain.sealed",
+                severity=Severity.CRITICAL,
+                message=f"enclave {enclave_id!r} sealed -- one-way door, cannot be reopened",
+                data={"enclave": enclave_id, "quorum": self.config.quorum.seal_requires_quorum},
+            )
+        )
+        return Verdict.allow(f"enclave {enclave_id!r} sealed")
 
     # -- the single decision point --------------------------------------
     def authorize(

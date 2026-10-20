@@ -108,3 +108,28 @@ suspicion_delay_factor = 5.0     # Lightspeed delay multiplier applied to a quar
 hard_signal_quarantine = 1       # canary trips that quarantine at once, decay-immune (1 = a single trip)
 enclave_aggregate_threshold = 150.0  # summed hostile pressure per enclave that seals it (defeats id-rotation)
 max_principals = 100000          # LRU bound on tracked principals
+auto_seal = true                 # false: quarantine stays automatic, sealing is only recommended
+
+# --------------------------------------------------------------------------
+# Quorum -- the key must not be a person.
+# Sealing is irreversible. With `seal_requires_quorum = true`, `bdosctl seal`
+# needs `m` signed approvals from distinct enrolled approvers, and the action
+# may only run `delay_seconds` after the m-th approval (deliberate slowness);
+# the Sentinel then quarantines on its own but only *recommends* sealing.
+#
+#   bdosctl keygen --out alice.key        # each approver, on their own device
+#   bdosctl quorum request --target crown-jewels --reason "..." --requested-by soc-1 --out req.json
+#   bdosctl quorum approve --request req.json --approver alice --key alice.key --out alice.json
+#   bdosctl seal crown-jewels --request req.json --approval alice.json --approval bob.json
+# --------------------------------------------------------------------------
+[quorum]
+seal_requires_quorum = false     # true requires m >= 2 and at least m enrolled approvers
+m = 2
+delay_seconds = 900.0            # 15 minutes between quorum and execution
+validity_seconds = 3600.0        # requests and approvals are void after one hour
+clock_skew = 5.0
+
+[quorum.approvers]
+# alice = "<public key printed by bdosctl keygen>"
+# bob   = "<...>"
+# carol = "<...>"

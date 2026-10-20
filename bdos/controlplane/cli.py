@@ -3,7 +3,8 @@
 Every subcommand is a thin, import-safe wrapper around the same primitives the
 daemon uses, so the CLI is fully exercisable in-process by calling
 ``main([...])``. It mints and verifies safety notices, prints live status,
-seals an enclave into a one-way door, and -- most usefully for demonstrating the
+seals an enclave into a one-way door (behind an m-of-n quorum when the policy
+asks for one), checks the control registry, and -- most usefully for demonstrating the
 doctrine -- runs a scripted rogue-agent burst through
 :meth:`~bdos.controlplane.daemon.ControlPlane.authorize` so the escalating
 Lightspeed tax and the eventual Sentinel quarantine can be watched happening.
@@ -36,6 +37,7 @@ from bdos.core.events import Event, EventLog, Severity
 from bdos.core.identity import Principal, PrincipalKind
 from bdos.safetynotice import SafetyNotice, SafetyNoticeIssuer, SafetyNoticeVerifier
 from bdos.controlplane.daemon import ControlPlane
+from bdos.quorum import ActionRequest, Approval
 
 # Exit codes shared with os/bin/bdos-exec: 0 = proceed, 3 = refuse.
 _EXIT_OK = 0
@@ -192,26 +194,101 @@ def _cmd_status(args) -> int:
 
 
 def _cmd_seal(args) -> int:
-    """Seal a named enclave into a one-way door (illustrative, in-memory)."""
+    """Seal a named enclave into a one-way door (illustrative, in-memory).
+
+    When the policy sets ``quorum.seal_requires_quorum``, ``--request`` and
+    enough ``--approval`` files must be given; otherwise the seal is refused.
+    """
     plane = ControlPlane(_load_config(args.config))
-    enclave = next((e for e in plane.enclaves if e.id == args.enclave), None)
-    if enclave is None:
+    if not any(e.id == args.enclave for e in plane.enclaves):
         known = ", ".join(e.id for e in plane.enclaves) or "(none)"
         print(f"seal: no enclave named {args.enclave!r} (known: {known})")
         return _EXIT_DENY
-    enclave.seal()
-    plane.log.append(
-        Event(
-            ts=plane.clock.wall(),
-            kind="blackdomain.sealed",
-            severity=Severity.CRITICAL,
-            message=f"enclave {enclave.id!r} sealed -- one-way door, cannot be reopened",
-            data={"enclave": enclave.id},
-        )
-    )
-    print(f"sealed enclave {enclave.id!r}: reads still flow in, nothing may change or leave.")
+    request = ActionRequest.from_dict(_read_json(args.request)) if args.request else None
+    approvals = [Approval.from_dict(_read_json(path)) for path in args.approval or []]
+    verdict = plane.seal(args.enclave, request, approvals)
+    if not verdict.allowed:
+        print(f"seal refused: {verdict.reason}")
+        for line in verdict.metadata.get("rejected", []):
+            print(f"  - {line}")
+        return _EXIT_DENY
+    print(f"sealed enclave {args.enclave!r}: reads still flow in, nothing may change or leave.")
     print("this is a one-way door and cannot be reopened.")
     return _EXIT_OK
+
+
+def _read_json(path: str) -> dict:
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _write_json(path: Optional[str], data: dict) -> None:
+    text = json.dumps(data, indent=2, sort_keys=True)
+    if path:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+        print(f"written to {path}")
+    else:
+        print(text)
+
+
+def _cmd_quorum_request(args) -> int:
+    """Describe one irreversible action so approvers can sign it."""
+    request = ActionRequest(
+        action=args.action,
+        target=args.target,
+        reason=args.reason,
+        requested_by=args.requested_by,
+        created=SystemClock().wall(),
+    )
+    _write_json(args.out, request.to_dict())
+    print(f"# request digest {request.digest}", file=sys.stderr)
+    return _EXIT_OK
+
+
+def _cmd_quorum_approve(args) -> int:
+    """Sign a request with one approver's own key."""
+    request = ActionRequest.from_dict(_read_json(args.request))
+    sk = _key_from_arg(args.key)
+    if sk is None:
+        print("approve: --key is required", file=sys.stderr)
+        return _EXIT_DENY
+    print(f"# approving {request.action} on {request.target}: {request.reason}", file=sys.stderr)
+    approval = Approval.sign(request, args.approver, sk, SystemClock().wall())
+    _write_json(args.out, approval.to_dict())
+    return _EXIT_OK
+
+
+def _cmd_registry(args) -> int:
+    """Check a control registry, or print its coverage."""
+    import datetime as _dt
+
+    from bdos.core.errors import ConfigError
+    from bdos.registry import ERROR, PRINCIPLES, check, coverage, load
+
+    try:
+        registry = load(args.file)
+    except ConfigError as exc:
+        print(f"registry: {exc}")
+        return _EXIT_DENY
+    today = _dt.date.fromisoformat(args.today) if args.today else None
+    if args.registry_command == "coverage":
+        cov = coverage(registry, today)
+        print(f"controls            : {cov['controls']} ({cov['laws']} laws)")
+        bare = cov["principles_without_control"]
+        print(f"principles uncovered: {', '.join(f'{p} ({PRINCIPLES[p]})' for p in bare) or '(none)'}")
+        detection = cov["effect_classes_detection_only"]
+        print(f"detection-only      : {', '.join(detection) or '(none)'}")
+        print(f"active exceptions   : {len(cov['active_exceptions'])}")
+        for cid, eid, age in cov["active_exceptions"]:
+            print(f"  - {cid} / {eid}" + (f" ({age} days old)" if age >= 0 else ""))
+        return _EXIT_OK
+    findings = check(registry, today)
+    for finding in findings:
+        print(finding)
+    errors = sum(1 for f in findings if f.severity == ERROR)
+    print(f"{len(registry.controls)} controls, {errors} errors, {len(findings) - errors} warnings")
+    return _EXIT_DENY if errors else _EXIT_OK
 
 
 def _socket_request(path: str, req: dict) -> dict:
@@ -371,7 +448,34 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("seal", help="seal an enclave into a one-way door")
     p.add_argument("enclave", help="id of the enclave to seal")
     p.add_argument("--config", help="path to a bdos.toml policy")
+    p.add_argument("--request", help="quorum request file (JSON), if the policy requires a quorum")
+    p.add_argument("--approval", action="append", help="one approval file (JSON); repeat per approver")
     p.set_defaults(func=_cmd_seal)
+
+    p = sub.add_parser("quorum", help="request or approve an irreversible action")
+    qsub = p.add_subparsers(dest="quorum_command", required=True)
+    q = qsub.add_parser("request", help="describe an irreversible action for approvers to sign")
+    q.add_argument("--action", default="seal")
+    q.add_argument("--target", required=True, help="e.g. the enclave id")
+    q.add_argument("--reason", required=True)
+    q.add_argument("--requested-by", dest="requested_by", required=True)
+    q.add_argument("--out", help="write the request here instead of stdout")
+    q.set_defaults(func=_cmd_quorum_request)
+    q = qsub.add_parser("approve", help="sign a request with your own key")
+    q.add_argument("--request", required=True)
+    q.add_argument("--approver", required=True, help="your enrolled approver id")
+    q.add_argument("--key", required=True, help="your private key (base64 or file path)")
+    q.add_argument("--out", help="write the approval here instead of stdout")
+    q.set_defaults(func=_cmd_quorum_approve)
+
+    p = sub.add_parser("registry", help="check a control registry (controls.toml)")
+    rsub = p.add_subparsers(dest="registry_command", required=True)
+    for name, help_text in (("check", "report broken rules (exit 3 on any error)"),
+                            ("coverage", "principles left bare, detection-only effect classes")):
+        r = rsub.add_parser(name, help=help_text)
+        r.add_argument("file")
+        r.add_argument("--today", help="evaluate as of this ISO date (default: today)")
+        r.set_defaults(func=_cmd_registry)
 
     p = sub.add_parser("guard", help="evaluate one request (exit 0 allow, 3 deny) -- used by bdos-exec")
     p.add_argument("--principal", required=True)

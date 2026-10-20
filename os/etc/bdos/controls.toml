@@ -1,0 +1,237 @@
+# BDOS -- registre des contrôles (exemple)
+#
+# Un contrôle par principe de l'essai (docs/domaine-noir-cyberdefense.md, §3).
+# Chaque entrée dit de quelle attaque elle est la cicatrice, contre quelle arme
+# elle a été conçue, qui peut la lever, si elle se défait, comment un tiers peut
+# constater qu'elle tient, et quand on la regarde de nouveau.
+#
+#   bdosctl registry check    os/etc/bdos/controls.toml
+#   bdosctl registry coverage os/etc/bdos/controls.toml
+#
+# L'exemple contient volontairement deux défauts, pour la démonstration :
+# C-3.8-seal-enclave peut être levé par un seul rôle alors qu'il est
+# irréversible, et C-3.5-uniform-errors porte une exception expirée.
+#
+# kind = "loi"   : tient face à un administrateur de production compromis, et
+#                  un tiers peut le vérifier (third_party_check obligatoire).
+# kind = "regle" : quelqu'un peut la lever (lifted_by obligatoire).
+# property_based : true si le contrôle tient quelle que soit l'arme (diode,
+#                  quorum) ; false s'il repose sur la reconnaissance d'une arme.
+
+[[control]]
+id = "C-3.1-egress-deny"
+principle = "3.1"
+title = "Sortie interdite par défaut, mandataire explicite et DNS protecteur"
+kind = "regle"
+scar = "Exfiltration par canal DNS et par HTTPS direct depuis des serveurs sans besoin de sortie"
+threat_hypothesis = "Charge malveillante qui doit joindre un serveur de commande ou une destination de dépôt"
+effect_class = "exfiltration"
+property_based = true
+lifted_by = ["equipe-reseau", "rssi"]
+resists_compromised_admin = false
+reversible = true
+indicator = "Part des flux sortants via mandataire ; test de démarrage à froid"
+owner = "equipe-reseau"
+review_by = 2027-03-31
+
+[[control]]
+id = "C-3.2-worm-logs"
+principle = "3.2"
+title = "Journaux en stockage inaltérable (mode conformité) dans un compte distinct"
+kind = "loi"
+scar = "Effacement des journaux par l'attaquant devenu administrateur avant la découverte"
+threat_hypothesis = "Administrateur de production compromis qui veut effacer ses traces"
+effect_class = "effacement-de-traces"
+property_based = true
+lifted_by = []
+resists_compromised_admin = true
+third_party_check = "Configuration de rétention lisible par l'auditeur ; empreinte quotidienne publiée hors du compte"
+reversible = false
+indicator = "Jours de rétention effectifs ; écarts entre empreintes publiées et recalculées"
+owner = "soc"
+review_by = 2027-06-30
+
+[[control]]
+id = "C-3.3-ct-monitoring"
+principle = "3.3"
+title = "Surveillance des journaux de transparence des certificats pour nos domaines"
+kind = "regle"
+scar = "Sous-domaine de préproduction découvert par un attaquant via un certificat publié"
+threat_hypothesis = "Reconnaissance passive à partir de ce que l'organisation publie sans le savoir"
+effect_class = "reconnaissance"
+property_based = false
+lifted_by = ["soc"]
+resists_compromised_admin = false
+reversible = true
+indicator = "Délai entre émission d'un certificat et revue par le SOC"
+owner = "soc"
+review_by = 2027-01-31
+
+[[control]]
+id = "C-3.4-short-secrets"
+principle = "3.4"
+title = "Secrets et certificats de service à courte durée, rotation automatique"
+kind = "regle"
+scar = "Clé d'API statique copiée dans un dépôt public et valide trois ans plus tard"
+threat_hypothesis = "Secret déjà capturé, exploité plus tard"
+effect_class = "usurpation-identite"
+property_based = true
+lifted_by = ["plateforme", "rssi"]
+resists_compromised_admin = false
+reversible = true
+indicator = "Âge médian et maximal des secrets statiques"
+owner = "plateforme"
+review_by = 2027-02-28
+
+[[control]]
+id = "C-3.5-uniform-errors"
+principle = "3.5"
+title = "Messages d'erreur indifférenciés et temps constant sur l'authentification"
+kind = "regle"
+scar = "Énumération des comptes par la différence entre « utilisateur inconnu » et « mot de passe faux »"
+threat_hypothesis = "Attaquant qui interroge le service pour vérifier ses hypothèses"
+effect_class = "reconnaissance"
+property_based = true
+lifted_by = ["dev-identite"]
+resists_compromised_admin = false
+reversible = true
+indicator = "Résultat des tests d'énumération en intégration continue"
+owner = "dev-identite"
+review_by = 2027-04-30
+
+  [[control.exception]]
+  id = "EX-legacy-portal"
+  reason = "Ancien portail partenaires en cours de retrait"
+  granted = 2026-01-15
+  expires = 2026-09-30
+  approved_by = ["rssi"]
+
+[[control]]
+id = "C-3.6-canary-creds"
+principle = "3.6"
+title = "Identifiants leurres dans les postes d'administration et coffres"
+kind = "regle"
+scar = "Mouvement latéral resté invisible six semaines faute de signal fiable"
+threat_hypothesis = "Intrus qui récolte des identifiants et les essaie"
+effect_class = "mouvement-lateral"
+property_based = false
+lifted_by = ["equipe-leurres"]
+resists_compromised_admin = false
+reversible = true
+indicator = "Délai touche → prise en compte ; âge des leurres"
+owner = "equipe-leurres"
+review_by = 2027-01-31
+
+[[control]]
+id = "C-3.7-sensor-heartbeat"
+principle = "3.7"
+title = "Battement de cœur des capteurs, absence de télémétrie traitée comme une alerte"
+kind = "regle"
+scar = "Agent EDR désactivé sur un contrôleur de domaine sans que personne ne le remarque"
+threat_hypothesis = "Attaquant qui aveugle les instruments avant d'agir"
+effect_class = "aveuglement"
+property_based = true
+lifted_by = ["soc", "rssi"]
+resists_compromised_admin = false
+reversible = true
+indicator = "Trous de télémétrie détectés ; délai de détection d'un capteur muet"
+owner = "soc"
+review_by = 2027-03-31
+
+[[control]]
+id = "C-3.8-seal-enclave"
+principle = "3.8"
+title = "Scellement de l'enclave des joyaux"
+kind = "regle"
+scar = "Rançongiciel ayant chiffré les sauvegardes avant le déclenchement de l'isolement"
+threat_hypothesis = "Agent autonome qui vise les joyaux à cadence machine"
+effect_class = "destruction"
+property_based = true
+# Défaut volontaire : irréversible, mais un seul rôle peut le déclencher ou le lever.
+lifted_by = ["astreinte"]
+resists_compromised_admin = false
+reversible = false
+indicator = "Degré d'exécution en exercice (alerte → scellement exécuté)"
+owner = "rssi"
+review_by = 2027-03-31
+
+[[control]]
+id = "C-3.9-backup-diode"
+principle = "3.9"
+title = "Copie des fonctions vitales poussée à travers une diode vers un site sans retour"
+kind = "loi"
+scar = "Sauvegardes supprimées depuis la console d'administration compromise"
+threat_hypothesis = "Toute arme capable d'atteindre le plan d'administration, connue ou non"
+effect_class = "destruction"
+property_based = true
+lifted_by = []
+resists_compromised_admin = true
+third_party_check = "Inspection physique de la diode ; restauration annuelle constatée par l'audit"
+reversible = false
+indicator = "Durée chronométrée de restauration du cœur"
+owner = "plateforme"
+review_by = 2027-06-30
+
+[[control]]
+id = "C-3.10-kev-sla"
+principle = "3.10"
+title = "Correction des vulnérabilités du catalogue KEV exposées sous 72 heures"
+kind = "regle"
+scar = "Équipement de bordure exploité quatre jours après la publication de la faille"
+threat_hypothesis = "Exploitation de masse d'une vulnérabilité publique sur un actif exposé"
+effect_class = "exploitation"
+property_based = false
+lifted_by = ["rssi"]
+resists_compromised_admin = false
+reversible = true
+indicator = "Délai médian d'atténuation des KEV sur les actifs exposés"
+owner = "exploitation"
+review_by = 2026-12-31
+
+[[control]]
+id = "C-3.11-admin-tiers"
+principle = "3.11"
+title = "Niveaux d'administration étanches, copie hors ligne sans identité partagée"
+kind = "regle"
+scar = "Compromission d'un compte de service ayant donné les droits sur tout l'annuaire"
+threat_hypothesis = "Compromission d'une identité centrale qui commande toute la flotte"
+effect_class = "mouvement-lateral"
+property_based = true
+lifted_by = ["architecture", "rssi"]
+resists_compromised_admin = false
+reversible = true
+indicator = "Chemins d'attaque vers les administrateurs de niveau 0"
+owner = "architecture"
+review_by = 2027-03-31
+
+[[control]]
+id = "C-3.12-fido2"
+principle = "3.12"
+title = "Authentification FIDO2 sur tout accès distant et administratif"
+kind = "regle"
+scar = "Hameçonnage en temps réel ayant contourné les codes à usage unique"
+threat_hypothesis = "Relais d'hameçonnage et vol de session"
+effect_class = "usurpation-identite"
+property_based = true
+lifted_by = ["iam", "rssi"]
+resists_compromised_admin = false
+reversible = true
+indicator = "Part des accès sous MFA résistante au hameçonnage"
+owner = "iam"
+review_by = 2027-02-28
+
+[[control]]
+id = "C-3.13-dangling-dns"
+principle = "3.13"
+title = "Suppression des enregistrements DNS sans cible vivante"
+kind = "regle"
+scar = "Sous-domaine repris par un tiers après la résiliation d'un service en nuage"
+threat_hypothesis = "Prise de contrôle d'un résidu laissé derrière soi"
+effect_class = "usurpation-identite"
+property_based = true
+lifted_by = ["equipe-reseau"]
+resists_compromised_admin = false
+reversible = true
+indicator = "Enregistrements DNS sans cible vivante"
+owner = "equipe-reseau"
+review_by = 2027-01-31

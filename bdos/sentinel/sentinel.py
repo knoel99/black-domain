@@ -275,7 +275,12 @@ class Sentinel:
             "enclave": self._enclave_id(enclave),
             "trigger": reason,
         }
-        if not self.cfg.auto_contain:
+        # Sealing is irreversible: with auto_seal off (sealing needs a quorum)
+        # the Sentinel keeps its reversible reflex -- quarantine -- and only
+        # recommends the irreversible one.
+        if not self.cfg.auto_contain or not self.cfg.auto_seal:
+            if not self.cfg.auto_seal:
+                data["requires_quorum"] = True
             self._emit(
                 "sentinel.recommend_seal",
                 Severity.WARNING,

@@ -16,6 +16,7 @@ import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any
 
+from bdos.core.crypto import b64d
 from bdos.core.errors import ConfigError
 
 # Action classes, ordered by blast radius. Everything maps onto one of these.
@@ -140,6 +141,27 @@ class SentinelConfig:
     enclave_aggregate_threshold: float = 150.0
     # Upper bound on tracked principals (LRU eviction of the lowest scorers).
     max_principals: int = 100_000
+    # If False, the Sentinel still quarantines on its own (reversible) but only
+    # *recommends* sealing (irreversible). Set by the control plane when sealing
+    # requires a quorum.
+    auto_seal: bool = True
+
+
+@dataclass
+class QuorumConfig:
+    """m-of-n approval in front of irreversible actions ("the key must not be a person")."""
+
+    # When True, sealing an enclave needs ``m`` distinct signed approvals and the
+    # Sentinel stops sealing on its own.
+    seal_requires_quorum: bool = False
+    m: int = 2
+    # approver id -> Ed25519 public key (url-safe base64, as printed by keygen).
+    approvers: dict[str, str] = field(default_factory=dict)
+    # Deliberate slowness: time between reaching quorum and being allowed to act.
+    delay_seconds: float = 900.0
+    # A request (and its approvals) is void this long after it was created.
+    validity_seconds: float = 3600.0
+    clock_skew: float = 5.0
 
 
 @dataclass
@@ -149,6 +171,7 @@ class BDOSConfig:
     darkforest: DarkForestConfig = field(default_factory=DarkForestConfig)
     blackdomain: BlackDomainConfig = field(default_factory=BlackDomainConfig)
     sentinel: SentinelConfig = field(default_factory=SentinelConfig)
+    quorum: QuorumConfig = field(default_factory=QuorumConfig)
 
     def validate(self) -> "BDOSConfig":
         ls = self.lightspeed
@@ -184,7 +207,34 @@ class BDOSConfig:
             raise ConfigError("sentinel.seal_threshold must be >= quarantine_threshold")
         if self.sentinel.decay_half_life_seconds <= 0:
             raise ConfigError("sentinel.decay_half_life_seconds must be positive")
+        self._validate_quorum()
         return self
+
+    def _validate_quorum(self) -> None:
+        q = self.quorum
+        if q.delay_seconds < 0 or q.clock_skew < 0:
+            raise ConfigError("quorum.delay_seconds and quorum.clock_skew must be non-negative")
+        if q.validity_seconds <= q.delay_seconds:
+            raise ConfigError("quorum.validity_seconds must exceed quorum.delay_seconds")
+        keys: dict[str, str] = {}
+        for approver, pub in q.approvers.items():
+            try:
+                raw = b64d(pub)
+            except (ValueError, TypeError) as exc:
+                raise ConfigError(f"quorum approver {approver!r} has an undecodable key") from exc
+            if len(raw) != 32:
+                raise ConfigError(f"quorum approver {approver!r} key is not a 32-byte Ed25519 key")
+            if raw in keys:
+                raise ConfigError(
+                    f"quorum approvers {keys[raw]!r} and {approver!r} share a key; "
+                    "one person holding two seats is not a quorum"
+                )
+            keys[raw] = approver
+        if q.seal_requires_quorum:
+            if q.m < 2:
+                raise ConfigError("quorum.m must be >= 2: a single approver is not a quorum")
+            if len(q.approvers) < q.m:
+                raise ConfigError(f"quorum.m = {q.m} but only {len(q.approvers)} approvers are enrolled")
 
 
 def _build(cls, data: Any):
@@ -215,6 +265,7 @@ def from_dict(data: dict) -> BDOSConfig:
         "darkforest": DarkForestConfig,
         "blackdomain": BlackDomainConfig,
         "sentinel": SentinelConfig,
+        "quorum": QuorumConfig,
     }
     kwargs = {}
     for name, cls in sections.items():
